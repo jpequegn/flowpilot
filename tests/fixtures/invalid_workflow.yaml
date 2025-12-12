@@ -1,0 +1,17 @@
+# This workflow has multiple validation errors
+name: Invalid Workflow Name  # Invalid: contains spaces and uppercase
+description: A workflow designed to fail validation
+
+# Missing version field is OK (default 1)
+
+triggers:
+  - type: cron
+    schedule: "0 9 * *"  # Invalid: only 4 fields, needs 5 or 6
+
+nodes:
+  # Empty nodes list would also be invalid, but we have one node
+  - id: Bad-Node-ID  # Invalid: contains uppercase
+    type: shell
+    command: echo test
+    depends_on:
+      - nonexistent-node  # Invalid: references node that doesn't exist
