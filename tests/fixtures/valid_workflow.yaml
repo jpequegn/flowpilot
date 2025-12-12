@@ -1,0 +1,49 @@
+name: hello-world
+description: A simple hello world workflow
+version: 1
+
+triggers:
+  - type: manual
+  - type: cron
+    schedule: "0 9 * * 1-5"
+    timezone: "America/New_York"
+
+inputs:
+  greeting:
+    type: string
+    default: "Hello"
+    description: "The greeting to use"
+  count:
+    type: number
+    default: 1
+    required: false
+
+nodes:
+  - id: say-hello
+    type: shell
+    command: "echo '{{ inputs.greeting }}, World!'"
+    timeout: 30
+
+  - id: check-response
+    type: condition
+    if: "'error' not in nodes.say_hello.output"
+    then: success-log
+    else: error-log
+
+  - id: success-log
+    type: shell
+    command: "echo 'Success!'"
+    depends_on:
+      - say-hello
+
+  - id: error-log
+    type: shell
+    command: "echo 'Error occurred'"
+    depends_on:
+      - say-hello
+
+settings:
+  timeout: 120
+  retry: 2
+  retry_delay: 10
+  on_error: continue

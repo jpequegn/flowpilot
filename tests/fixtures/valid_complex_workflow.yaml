@@ -1,0 +1,93 @@
+name: code-review-pipeline
+description: A complex workflow with multiple node types
+version: 2
+
+triggers:
+  - type: webhook
+    path: /hooks/code-review
+    secret: "${WEBHOOK_SECRET}"
+  - type: file-watch
+    path: ~/Code/myproject
+    events: [created, modified]
+    pattern: "*.py"
+  - type: interval
+    every: 30m
+
+inputs:
+  repo_path:
+    type: string
+    default: "~/Code/myproject"
+    required: true
+    description: "Path to the repository"
+  max_files:
+    type: number
+    default: 10
+
+nodes:
+  - id: fetch-changes
+    type: shell
+    command: "cd {{ inputs.repo_path }} && git diff --name-only HEAD~1"
+    working_dir: "{{ inputs.repo_path }}"
+    timeout: 60
+    env:
+      GIT_PAGER: ""
+
+  - id: read-config
+    type: file-read
+    path: "{{ inputs.repo_path }}/.reviewconfig"
+    encoding: utf-8
+
+  - id: fetch-api-data
+    type: http
+    url: "https://api.example.com/review-rules"
+    method: GET
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+    timeout: 30
+
+  - id: analyze-code
+    type: claude-cli
+    prompt: |
+      Review the following code changes:
+      {{ nodes.fetch_changes.output }}
+
+      Apply these rules:
+      {{ nodes.read_config.output }}
+    model: sonnet
+    working_dir: "{{ inputs.repo_path }}"
+    timeout: 300
+
+  - id: check-critical
+    type: condition
+    if: "'critical' in nodes.analyze_code.output.lower()"
+    then: notify-urgent
+    else: save-report
+
+  - id: notify-urgent
+    type: shell
+    command: "osascript -e 'display notification \"Critical issue found\" with title \"Code Review\"'"
+    depends_on:
+      - analyze-code
+
+  - id: save-report
+    type: file-write
+    path: "~/reports/{{ date('YYYY-MM-DD') }}-review.md"
+    content: "{{ nodes.analyze_code.output }}"
+    mode: write
+    depends_on:
+      - analyze-code
+
+  - id: api-review
+    type: claude-api
+    prompt: "Summarize the code review findings"
+    model: claude-3-haiku-20240307
+    system: "You are a code review assistant. Be concise."
+    max_tokens: 500
+    temperature: 0.3
+    depends_on:
+      - analyze-code
+
+settings:
+  timeout: 600
+  retry: 1
+  on_error: notify
