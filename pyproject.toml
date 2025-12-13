@@ -82,7 +82,11 @@ select = [
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
+    "B008",   # function call in default argument (required by Typer)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"src/flowpilot/cli/commands/*.py" = ["B904"]  # typer.Exit doesn't use exception chaining
 
 [tool.ruff.lint.isort]
 known-first-party = ["flowpilot"]
