@@ -327,4 +327,3 @@ class TestHttpExecutor:
         assert "headers" in result.data
         assert result.data["headers"]["x-custom-header"] == "custom-value"
         assert result.data["headers"]["x-rate-limit"] == "100"
-

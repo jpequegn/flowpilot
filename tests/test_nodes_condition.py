@@ -524,4 +524,3 @@ class TestConditionExecutor:
 
         assert result.status == "success"
         assert result.data["condition"] == "10 >= 5"
-
