@@ -54,9 +54,7 @@ class Execution(Base):
     )
     trigger_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     inputs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC)
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -112,9 +110,7 @@ class Schedule(Base):
     next_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC),

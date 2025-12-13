@@ -203,7 +203,11 @@ def _show_execution_details(db: Database, execution_id: str, json_output: bool) 
 
                 error_display = ""
                 if node_exec.error:
-                    error_display = f"[red]{node_exec.error[:40]}...[/]" if len(node_exec.error) > 40 else f"[red]{node_exec.error}[/]"
+                    error_display = (
+                        f"[red]{node_exec.error[:40]}...[/]"
+                        if len(node_exec.error) > 40
+                        else f"[red]{node_exec.error}[/]"
+                    )
 
                 node_table.add_row(
                     node_exec.node_id,
