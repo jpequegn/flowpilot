@@ -43,8 +43,8 @@ def enable(
 ) -> None:
     """Enable scheduling for a workflow.
 
-    Schedules the workflow based on its cron, interval, or file-watch triggers.
-    The workflow must have at least one schedulable trigger defined.
+    Schedules the workflow based on its cron, interval, file-watch, or webhook
+    triggers. The workflow must have at least one schedulable trigger defined.
 
     Examples:
         flowpilot enable my-workflow
@@ -71,6 +71,11 @@ def enable(
             console.print(f"  File watch: {fw['path']}")
             console.print(f"    Events: {events}, Pattern: {pattern}")
 
+        # Show webhooks
+        for wh in result.get("webhooks", []):
+            secret_indicator = " (with secret)" if wh.get("has_secret") else ""
+            console.print(f"  Webhook: /hooks{wh['path']}{secret_indicator}")
+
     except ScheduleManagerError as e:
         console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
@@ -92,12 +97,14 @@ def disable(
 
     result = manager.disable_workflow(name)
 
-    if result["schedule_removed"] or result["file_watch_removed"]:
+    if result["schedule_removed"] or result["file_watch_removed"] or result["webhook_removed"]:
         console.print(f"[green]✓[/] Disabled schedule for [cyan]{name}[/]")
         if result["schedule_removed"]:
             console.print("  Removed cron/interval schedule")
         if result["file_watch_removed"]:
             console.print("  Removed file watch")
+        if result["webhook_removed"]:
+            console.print("  Removed webhook")
     else:
         console.print(f"[yellow]![/] No schedule found for [cyan]{name}[/]")
 
@@ -135,6 +142,7 @@ def status(
                 "next_run": s["next_run"].isoformat() if s["next_run"] else None,
                 "trigger": s["trigger"],
                 "file_watch": s.get("file_watch"),
+                "webhook": s.get("webhook"),
                 "last_run": s["last_run"].isoformat() if s["last_run"] else None,
                 "last_status": s["last_status"],
             }
@@ -164,22 +172,39 @@ def status(
 
         # Determine trigger type and info
         file_watch = sched.get("file_watch")
+        webhook = sched.get("webhook")
         trigger = sched.get("trigger")
 
-        if file_watch and trigger:
+        # Build trigger type list
+        trigger_types = []
+        if trigger:
+            trigger_types.append("schedule")
+        if file_watch:
+            trigger_types.append("file-watch")
+        if webhook:
+            trigger_types.append("webhook")
+
+        if len(trigger_types) > 1:
             trigger_type = "mixed"
-            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        elif trigger_types:
+            trigger_type = trigger_types[0]
+        else:
+            trigger_type = "-"
+
+        # Determine display info
+        if trigger and sched["next_run"]:
+            next_run_or_path = _format_datetime(sched["next_run"])
         elif file_watch:
-            trigger_type = "file-watch"
             watch_path = file_watch.get("path", "-")
             if len(watch_path) > 25:
                 watch_path = "..." + watch_path[-22:]
             next_run_or_path = f"📁 {watch_path}"
-        elif trigger:
-            trigger_type = "schedule"
-            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        elif webhook:
+            webhook_path = webhook.get("path", "-")
+            if len(webhook_path) > 22:
+                webhook_path = "..." + webhook_path[-19:]
+            next_run_or_path = f"🔗 {webhook_path}"
         else:
-            trigger_type = "-"
             next_run_or_path = "-"
 
         last_run = _format_datetime(sched["last_run"]) if sched["last_run"] else "-"
