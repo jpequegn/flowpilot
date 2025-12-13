@@ -6,9 +6,10 @@ import asyncio
 import fnmatch
 import logging
 import threading
+from collections.abc import Sequence  # noqa: TC003 - used in function signature
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer

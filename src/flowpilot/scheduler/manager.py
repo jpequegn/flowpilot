@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from flowpilot.engine.parser import WorkflowParser
-from flowpilot.models.triggers import FileWatchTrigger
 from flowpilot.storage import Database, Schedule, ScheduleRepository
 
 from .file_watcher import FileWatchService  # noqa: TC001
@@ -17,6 +16,7 @@ from .triggers import is_schedulable, parse_trigger
 
 if TYPE_CHECKING:
     from flowpilot.models import Workflow
+    from flowpilot.models.triggers import FileWatchTrigger
 
 logger = logging.getLogger(__name__)
 
