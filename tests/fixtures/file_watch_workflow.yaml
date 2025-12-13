@@ -1,0 +1,14 @@
+name: process-downloads
+description: Process new files in Downloads folder
+
+triggers:
+  - type: file-watch
+    path: ~/Downloads
+    events: [created]
+    pattern: "*.pdf"
+
+nodes:
+  - id: log-file
+    type: shell
+    command: |
+      echo "New file: {{ inputs._file_event.path }}"

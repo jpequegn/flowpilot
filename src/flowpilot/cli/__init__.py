@@ -23,7 +23,14 @@ CONFIG_FILE = FLOWPILOT_DIR / "config.yaml"
 DB_FILE = FLOWPILOT_DIR / "flowpilot.db"
 
 # Import commands to register them
-from flowpilot.cli.commands import init, list_cmd, run, validate  # noqa: E402, F401
+from flowpilot.cli.commands import (  # noqa: E402, F401
+    history,
+    init,
+    list_cmd,
+    run,
+    schedule,
+    validate,
+)
 
 
 @app.command()

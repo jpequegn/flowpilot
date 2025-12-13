@@ -4,7 +4,16 @@ from pathlib import Path
 
 import typer
 
-from flowpilot.cli import WORKFLOWS_DIR, console
+from flowpilot.cli import FLOWPILOT_DIR, WORKFLOWS_DIR, console
+
+
+def get_flowpilot_dir() -> Path:
+    """Get the FlowPilot directory path.
+
+    Returns:
+        Path to ~/.flowpilot directory.
+    """
+    return FLOWPILOT_DIR
 
 
 def resolve_workflow_path(name: str) -> Path:
