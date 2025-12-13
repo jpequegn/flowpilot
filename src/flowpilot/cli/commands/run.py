@@ -10,10 +10,11 @@ from rich.table import Table
 # Import node executors to register them with the registry
 import flowpilot.engine.nodes  # noqa: F401
 from flowpilot.cli import app, console
-from flowpilot.cli.utils import resolve_workflow_path
+from flowpilot.cli.utils import get_flowpilot_dir, resolve_workflow_path
 from flowpilot.engine.context import ExecutionContext
 from flowpilot.engine.parser import WorkflowParser
 from flowpilot.engine.runner import WorkflowRunner
+from flowpilot.storage import Database
 
 
 @app.command()
@@ -79,10 +80,22 @@ def run(
             console.print(f"  [dim]Inputs: {input_dict}[/]")
         console.print()
 
-    # Execute workflow
+    # Execute workflow with database storage
     try:
-        runner = WorkflowRunner()
-        context = asyncio.run(runner.run(workflow, input_dict))
+        db_path = get_flowpilot_dir() / "flowpilot.db"
+        db = Database(db_path) if db_path.exists() else None
+        if db:
+            db.create_tables()
+
+        runner = WorkflowRunner(db=db)
+        context = asyncio.run(
+            runner.run(
+                workflow,
+                input_dict,
+                workflow_path=str(path),
+                trigger_type="manual",
+            )
+        )
     except Exception as e:
         if json_output:
             console.print_json(data={"error": str(e), "status": "failed"})
