@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from flowpilot.engine.parser import WorkflowParser
 from flowpilot.storage import Database, Schedule, ScheduleRepository
@@ -16,11 +16,12 @@ from .triggers import is_schedulable, parse_trigger
 
 if TYPE_CHECKING:
     from flowpilot.models import Workflow
+    from flowpilot.models.triggers import FileWatchTrigger
 
 logger = logging.getLogger(__name__)
 
 
-def _is_file_watch_trigger(trigger: Any) -> bool:
+def _is_file_watch_trigger(trigger: Any) -> TypeGuard[FileWatchTrigger]:
     """Check if trigger is a file-watch trigger.
 
     Args:
@@ -182,7 +183,7 @@ class ScheduleManager:
             schedule = repo.get_by_workflow(workflow_name)
 
             # Build combined trigger config for storage
-            combined_config = {}
+            combined_config: dict[str, Any] = {}
             if trigger_config:
                 combined_config["schedule"] = trigger_config.model_dump()
             if file_watches:

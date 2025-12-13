@@ -6,6 +6,7 @@ import asyncio
 import fnmatch
 import logging
 import threading
+from collections.abc import Sequence  # noqa: TC003 - used in function signature
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,7 +44,7 @@ class DebouncedHandler(FileSystemEventHandler):
     def __init__(
         self,
         callback: Any,  # Callable[[FileSystemEvent], None]
-        events: list[str],
+        events: Sequence[str],
         pattern: str | None = None,
         debounce_seconds: float = 1.0,
     ) -> None:
@@ -90,7 +91,9 @@ class DebouncedHandler(FileSystemEventHandler):
 
         # Check pattern
         if self.pattern:
-            filename = Path(event.src_path).name
+            src_path = event.src_path
+            path_str = src_path if isinstance(src_path, str) else src_path.decode()
+            filename = Path(path_str).name
             if not fnmatch.fnmatch(filename, self.pattern):
                 return False
 
@@ -102,7 +105,8 @@ class DebouncedHandler(FileSystemEventHandler):
         Args:
             event: The file system event to handle.
         """
-        path = event.src_path
+        src_path = event.src_path
+        path = src_path if isinstance(src_path, str) else src_path.decode()
         with self._lock:
             if path in self._pending:
                 del self._pending[path]
@@ -121,7 +125,8 @@ class DebouncedHandler(FileSystemEventHandler):
         if not self._should_handle(event):
             return
 
-        path = event.src_path
+        src_path = event.src_path
+        path = src_path if isinstance(src_path, str) else src_path.decode()
         logger.debug(f"File event: {event.event_type} - {path}")
 
         with self._lock:
@@ -217,11 +222,13 @@ class FileWatchService:
 
         def on_file_event(event: FileSystemEvent) -> None:
             """Callback when file event occurs."""
+            src_path = event.src_path
+            event_path = src_path if isinstance(src_path, str) else src_path.decode()
             _execute_file_watch_workflow(
                 workflow_name=workflow_name,
                 workflow_path=workflow_path,
                 event_type=event.event_type,
-                event_path=event.src_path,
+                event_path=event_path,
                 event_is_directory=event.is_directory,
             )
 

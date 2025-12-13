@@ -100,13 +100,23 @@ class ClaudeCliNode(BaseNode):
     """Execute a prompt using Claude Code CLI."""
 
     type: Literal["claude-cli"]
-    prompt: str = Field(..., description="Prompt to send to Claude")
+    prompt: str = Field(..., description="Prompt to send to Claude (Jinja2 templated)")
     model: Literal["sonnet", "opus", "haiku"] | None = Field(
         default=None, description="Model to use"
     )
     working_dir: str | None = Field(default=None, description="Working directory context")
     timeout: int = Field(default=300, ge=1, description="Timeout in seconds")
-    output_format: Literal["text", "json"] = Field(default="text", description="Output format")
+    output_format: Literal["text", "json", "stream-json"] = Field(
+        default="text", description="Output format"
+    )
+    max_tokens: int | None = Field(default=None, ge=1, description="Maximum tokens for response")
+    system_prompt: str | None = Field(default=None, description="Additional system context")
+    allowed_tools: list[str] | None = Field(
+        default=None, description="Restrict tool access to these tools"
+    )
+    no_tools: bool = Field(default=False, description="Disable all tools")
+    session_id: str | None = Field(default=None, description="Resume previous conversation")
+    save_session: bool = Field(default=False, description="Save session for continuation")
 
 
 class ClaudeApiNode(BaseNode):
