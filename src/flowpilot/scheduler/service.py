@@ -188,7 +188,7 @@ class SchedulerService:
         )
 
         logger.info(f"Scheduled workflow '{workflow.name}' with job ID: {job.id}")
-        return job.id
+        return str(job.id)
 
     def remove_schedule(self, workflow_name: str) -> bool:
         """Remove a workflow schedule.
