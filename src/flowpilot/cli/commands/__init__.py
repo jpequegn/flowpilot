@@ -6,9 +6,10 @@ from flowpilot.cli.commands import (
     history,
     init,
     list_cmd,
+    logs,
     run,
     schedule,
     validate,
 )
 
-__all__ = ["history", "init", "list_cmd", "run", "schedule", "validate"]
+__all__ = ["history", "init", "list_cmd", "logs", "run", "schedule", "validate"]

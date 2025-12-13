@@ -44,6 +44,11 @@ def history(
         "--id",
         help="Show details for a specific execution ID",
     ),
+    last: bool = typer.Option(
+        False,
+        "--last",
+        help="Show details for the most recent execution",
+    ),
 ) -> None:
     """Show execution history.
 
@@ -55,6 +60,8 @@ def history(
         flowpilot history --limit 50
         flowpilot history --status failed
         flowpilot history --id abc12345
+        flowpilot history --last
+        flowpilot history my-workflow --last
     """
     db_path = get_flowpilot_dir() / "flowpilot.db"
 
@@ -68,6 +75,11 @@ def history(
     # If specific execution ID requested, show details
     if execution_id:
         _show_execution_details(db, execution_id, json_output)
+        return
+
+    # If --last flag, show most recent execution details
+    if last:
+        _show_last_execution(db, name, json_output)
         return
 
     # Parse status filter
@@ -132,11 +144,31 @@ def history(
         console.print("[dim]Use --id <id> to see execution details[/]")
 
 
-def _show_execution_details(db: Database, execution_id: str, json_output: bool) -> None:
-    """Show details for a specific execution."""
+def _show_last_execution(db: Database, workflow_name: str | None, json_output: bool) -> None:
+    """Show details for the most recent execution."""
     with db.session_scope() as session:
         repo = ExecutionRepository(session)
-        node_repo = NodeExecutionRepository(session)
+
+        if workflow_name:
+            executions = repo.get_by_workflow(workflow_name, limit=1)
+        else:
+            executions = repo.get_recent(limit=1)
+
+        if not executions:
+            if workflow_name:
+                console.print(f"[yellow]No executions found for workflow '{workflow_name}'[/]")
+            else:
+                console.print("[yellow]No execution history found.[/]")
+            raise typer.Exit(0)
+
+        execution = executions[0]
+        _show_execution_details_for_obj(db, execution, json_output)
+
+
+def _show_execution_details(db: Database, execution_id: str, json_output: bool) -> None:
+    """Show details for a specific execution by ID."""
+    with db.session_scope() as session:
+        repo = ExecutionRepository(session)
 
         # Try to find by full ID or prefix
         execution = repo.get_by_id(execution_id)
@@ -156,6 +188,14 @@ def _show_execution_details(db: Database, execution_id: str, json_output: bool) 
         if execution is None:
             console.print(f"[red]Error:[/] Execution not found: {execution_id}")
             raise typer.Exit(1)
+
+        _show_execution_details_for_obj(db, execution, json_output)
+
+
+def _show_execution_details_for_obj(db: Database, execution: Any, json_output: bool) -> None:
+    """Show detailed execution info for an execution object."""
+    with db.session_scope() as session:
+        node_repo = NodeExecutionRepository(session)
 
         # Get node executions
         node_executions = node_repo.get_by_execution(execution.id)
