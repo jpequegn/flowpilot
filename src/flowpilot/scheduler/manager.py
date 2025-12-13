@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
+from flowpilot.api import get_webhooks, register_webhook, unregister_webhook
 from flowpilot.engine.parser import WorkflowParser
 from flowpilot.storage import Database, Schedule, ScheduleRepository
 
@@ -16,11 +18,12 @@ from .triggers import is_schedulable, parse_trigger
 
 if TYPE_CHECKING:
     from flowpilot.models import Workflow
+    from flowpilot.models.triggers import FileWatchTrigger, WebhookTrigger
 
 logger = logging.getLogger(__name__)
 
 
-def _is_file_watch_trigger(trigger: Any) -> bool:
+def _is_file_watch_trigger(trigger: Any) -> TypeGuard[FileWatchTrigger]:
     """Check if trigger is a file-watch trigger.
 
     Args:
@@ -30,6 +33,35 @@ def _is_file_watch_trigger(trigger: Any) -> bool:
         True if file-watch trigger, False otherwise.
     """
     return getattr(trigger, "type", None) == "file-watch"
+
+
+def _is_webhook_trigger(trigger: Any) -> TypeGuard[WebhookTrigger]:
+    """Check if trigger is a webhook trigger.
+
+    Args:
+        trigger: The trigger to check.
+
+    Returns:
+        True if webhook trigger, False otherwise.
+    """
+    return getattr(trigger, "type", None) == "webhook"
+
+
+def _resolve_secret(secret: str | None) -> str | None:
+    """Resolve secret from environment variable if needed.
+
+    Args:
+        secret: Secret value, possibly an env var reference like ${VAR}.
+
+    Returns:
+        Resolved secret value or None.
+    """
+    if not secret:
+        return None
+    if secret.startswith("${") and secret.endswith("}"):
+        env_var = secret[2:-1]
+        return os.environ.get(env_var)
+    return secret
 
 
 class ScheduleManagerError(Exception):
@@ -119,14 +151,17 @@ class ScheduleManager:
         """
         workflow, path = self._load_workflow(workflow_name)
 
-        # Find schedulable triggers (cron, interval) and file-watch triggers
+        # Find all trigger types
         schedulable = [t for t in workflow.triggers if is_schedulable(t)]
-        file_watches = [t for t in workflow.triggers if _is_file_watch_trigger(t)]
+        file_watches: list[FileWatchTrigger] = [
+            t for t in workflow.triggers if _is_file_watch_trigger(t)
+        ]
+        webhooks: list[WebhookTrigger] = [t for t in workflow.triggers if _is_webhook_trigger(t)]
 
-        if not schedulable and not file_watches:
+        if not schedulable and not file_watches and not webhooks:
             msg = (
                 f"Workflow '{workflow_name}' has no schedulable triggers "
-                "(cron, interval, or file-watch)"
+                "(cron, interval, file-watch, or webhook)"
             )
             raise ScheduleManagerError(msg)
 
@@ -134,6 +169,7 @@ class ScheduleManager:
             "workflow_name": workflow_name,
             "scheduled": [],
             "file_watches": [],
+            "webhooks": [],
         }
 
         # Schedule cron/interval triggers with APScheduler
@@ -176,17 +212,35 @@ class ScheduleManager:
                     }
                 )
 
+        # Register webhooks
+        for wh_trigger in webhooks:
+            resolved_secret = _resolve_secret(wh_trigger.secret)
+            webhook_path = register_webhook(
+                wh_trigger.path,
+                workflow_name,
+                str(path),
+                resolved_secret,
+            )
+            result["webhooks"].append(
+                {
+                    "path": webhook_path,
+                    "has_secret": resolved_secret is not None,
+                }
+            )
+
         # Update database
         with self._db.session_scope() as session:
             repo = ScheduleRepository(session)
             schedule = repo.get_by_workflow(workflow_name)
 
             # Build combined trigger config for storage
-            combined_config = {}
+            combined_config: dict[str, Any] = {}
             if trigger_config:
                 combined_config["schedule"] = trigger_config.model_dump()
             if file_watches:
                 combined_config["file_watches"] = [fw.model_dump() for fw in file_watches]
+            if webhooks:
+                combined_config["webhooks"] = [wh.model_dump() for wh in webhooks]
 
             if schedule is None:
                 schedule = Schedule(
@@ -222,6 +276,7 @@ class ScheduleManager:
             "workflow_name": workflow_name,
             "schedule_removed": False,
             "file_watch_removed": False,
+            "webhook_removed": False,
         }
 
         # Remove APScheduler job
@@ -230,6 +285,9 @@ class ScheduleManager:
         # Remove file watch
         if self._file_watcher:
             result["file_watch_removed"] = self._file_watcher.remove_watch(workflow_name)
+
+        # Remove webhook
+        result["webhook_removed"] = unregister_webhook(workflow_name)
 
         # Update database
         with self._db.session_scope() as session:
@@ -242,7 +300,7 @@ class ScheduleManager:
                 schedule.updated_at = datetime.now(UTC)
                 repo.update(schedule)
 
-        if result["schedule_removed"] or result["file_watch_removed"]:
+        if result["schedule_removed"] or result["file_watch_removed"] or result["webhook_removed"]:
             logger.info(f"Disabled schedule for workflow: {workflow_name}")
 
         return result
@@ -314,16 +372,20 @@ class ScheduleManager:
             for watch in self._file_watcher.get_watches():
                 file_watches[watch["workflow"]] = watch
 
+        # Get active webhooks
+        webhooks = {wh["workflow_name"]: wh for wh in get_webhooks()}
+
         if workflow_name:
             # Get status for specific workflow
             schedule_info = self._scheduler.get_schedule(workflow_name)
             file_watch_info = file_watches.get(workflow_name)
+            webhook_info = webhooks.get(workflow_name)
 
             with self._db.session_scope() as session:
                 repo = ScheduleRepository(session)
                 db_schedule = repo.get_by_workflow(workflow_name)
 
-                if schedule_info or file_watch_info:
+                if schedule_info or file_watch_info or webhook_info:
                     return [
                         {
                             "name": workflow_name,
@@ -331,6 +393,7 @@ class ScheduleManager:
                             "next_run": schedule_info["next_run"] if schedule_info else None,
                             "trigger": schedule_info["trigger"] if schedule_info else None,
                             "file_watch": file_watch_info,
+                            "webhook": webhook_info,
                             "last_run": db_schedule.last_run if db_schedule else None,
                             "last_status": db_schedule.last_status if db_schedule else None,
                         }
@@ -346,6 +409,7 @@ class ScheduleManager:
                             if db_schedule.trigger_config
                             else None,
                             "file_watch": None,
+                            "webhook": None,
                             "last_run": db_schedule.last_run,
                             "last_status": db_schedule.last_status,
                         }
@@ -376,6 +440,7 @@ class ScheduleManager:
                         "next_run": sched["next_run"],
                         "trigger": sched["trigger"],
                         "file_watch": file_watches.get(name),
+                        "webhook": webhooks.get(name),
                         "last_run": db_sched.last_run if db_sched else None,
                         "last_status": db_sched.last_status if db_sched else None,
                     }
@@ -393,6 +458,25 @@ class ScheduleManager:
                             "next_run": None,
                             "trigger": None,
                             "file_watch": watch_info,
+                            "webhook": webhooks.get(name),
+                            "last_run": db_sched.last_run if db_sched else None,
+                            "last_status": db_sched.last_status if db_sched else None,
+                        }
+                    )
+
+            # Add workflows with only webhooks
+            for name, webhook_info in webhooks.items():
+                if name not in seen_names:
+                    seen_names.add(name)
+                    db_sched = all_db_schedules.get(name)
+                    result.append(
+                        {
+                            "name": name,
+                            "enabled": True,
+                            "next_run": None,
+                            "trigger": None,
+                            "file_watch": None,
+                            "webhook": webhook_info,
                             "last_run": db_sched.last_run if db_sched else None,
                             "last_status": db_sched.last_status if db_sched else None,
                         }
@@ -410,6 +494,7 @@ class ScheduleManager:
                             if db_sched.trigger_config
                             else None,
                             "file_watch": None,
+                            "webhook": None,
                             "last_run": db_sched.last_run,
                             "last_status": db_sched.last_status,
                         }
