@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseNode(BaseModel):
     """Base class for all workflow nodes."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str = Field(
         ...,
