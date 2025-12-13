@@ -12,7 +12,7 @@ from flowpilot.cli.utils import get_flowpilot_dir
 
 def _get_schedule_manager() -> Any:
     """Get a ScheduleManager instance."""
-    from flowpilot.scheduler import ScheduleManager, SchedulerService
+    from flowpilot.scheduler import FileWatchService, ScheduleManager, SchedulerService
     from flowpilot.storage import Database
 
     flowpilot_dir = get_flowpilot_dir()
@@ -31,7 +31,10 @@ def _get_schedule_manager() -> Any:
     scheduler_db_url = f"sqlite:///{flowpilot_dir / 'scheduler.db'}"
     scheduler = SchedulerService(scheduler_db_url, workflows_dir)
 
-    return ScheduleManager(scheduler, db, workflows_dir)
+    # Create file watcher service
+    file_watcher = FileWatchService()
+
+    return ScheduleManager(scheduler, db, file_watcher, workflows_dir)
 
 
 @app.command()
@@ -40,7 +43,7 @@ def enable(
 ) -> None:
     """Enable scheduling for a workflow.
 
-    Schedules the workflow based on its cron or interval triggers.
+    Schedules the workflow based on its cron, interval, or file-watch triggers.
     The workflow must have at least one schedulable trigger defined.
 
     Examples:
@@ -54,9 +57,19 @@ def enable(
         result = manager.enable_workflow(name)
 
         console.print(f"[green]✓[/] Enabled schedule for [cyan]{name}[/]")
-        console.print(f"  Trigger: {result['trigger']}")
-        if result["next_run"]:
-            console.print(f"  Next run: {_format_datetime(result['next_run'])}")
+
+        # Show scheduled triggers (cron/interval)
+        for sched in result.get("scheduled", []):
+            console.print(f"  Schedule: {sched['trigger']}")
+            if sched.get("next_run"):
+                console.print(f"  Next run: {_format_datetime(sched['next_run'])}")
+
+        # Show file watches
+        for fw in result.get("file_watches", []):
+            events = ", ".join(fw["events"])
+            pattern = fw.get("pattern") or "*"
+            console.print(f"  File watch: {fw['path']}")
+            console.print(f"    Events: {events}, Pattern: {pattern}")
 
     except ScheduleManagerError as e:
         console.print(f"[red]Error:[/] {e}")
@@ -69,16 +82,22 @@ def disable(
 ) -> None:
     """Disable scheduling for a workflow.
 
-    Removes the workflow from the scheduler. The workflow can still
-    be run manually with `flowpilot run`.
+    Removes the workflow from the scheduler and file watcher. The workflow
+    can still be run manually with `flowpilot run`.
 
     Examples:
         flowpilot disable my-workflow
     """
     manager = _get_schedule_manager()
 
-    if manager.disable_workflow(name):
+    result = manager.disable_workflow(name)
+
+    if result["schedule_removed"] or result["file_watch_removed"]:
         console.print(f"[green]✓[/] Disabled schedule for [cyan]{name}[/]")
+        if result["schedule_removed"]:
+            console.print("  Removed cron/interval schedule")
+        if result["file_watch_removed"]:
+            console.print("  Removed file watch")
     else:
         console.print(f"[yellow]![/] No schedule found for [cyan]{name}[/]")
 
@@ -98,7 +117,7 @@ def status(
     """Show schedule status for workflows.
 
     Displays enabled schedules with next run times, last run status,
-    and trigger configuration.
+    trigger configuration, and file watches.
 
     Examples:
         flowpilot status
@@ -115,6 +134,7 @@ def status(
                 "enabled": s["enabled"],
                 "next_run": s["next_run"].isoformat() if s["next_run"] else None,
                 "trigger": s["trigger"],
+                "file_watch": s.get("file_watch"),
                 "last_run": s["last_run"].isoformat() if s["last_run"] else None,
                 "last_status": s["last_status"],
             }
@@ -134,15 +154,34 @@ def status(
     table = Table(title="Scheduled Workflows")
     table.add_column("Workflow", style="cyan")
     table.add_column("Status")
-    table.add_column("Next Run")
+    table.add_column("Type")
+    table.add_column("Next Run / Watch Path")
     table.add_column("Last Run")
     table.add_column("Last Status")
-    table.add_column("Trigger", style="dim")
 
     for sched in schedules:
         status_display = "[green]● enabled[/]" if sched["enabled"] else "[dim]○ disabled[/]"
 
-        next_run = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        # Determine trigger type and info
+        file_watch = sched.get("file_watch")
+        trigger = sched.get("trigger")
+
+        if file_watch and trigger:
+            trigger_type = "mixed"
+            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        elif file_watch:
+            trigger_type = "file-watch"
+            watch_path = file_watch.get("path", "-")
+            if len(watch_path) > 25:
+                watch_path = "..." + watch_path[-22:]
+            next_run_or_path = f"📁 {watch_path}"
+        elif trigger:
+            trigger_type = "schedule"
+            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        else:
+            trigger_type = "-"
+            next_run_or_path = "-"
+
         last_run = _format_datetime(sched["last_run"]) if sched["last_run"] else "-"
 
         last_status = "-"
@@ -154,17 +193,13 @@ def status(
             else:
                 last_status = sched["last_status"]
 
-        trigger = sched["trigger"] or "-"
-        if len(trigger) > 30:
-            trigger = trigger[:27] + "..."
-
         table.add_row(
             sched["name"],
             status_display,
-            next_run,
+            trigger_type,
+            next_run_or_path,
             last_run,
             last_status,
-            trigger,
         )
 
     console.print(table)

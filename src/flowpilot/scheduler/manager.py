@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from flowpilot.engine.parser import WorkflowParser
 from flowpilot.storage import Database, Schedule, ScheduleRepository
 
+from .file_watcher import FileWatchService  # noqa: TC001
 from .service import SchedulerService  # noqa: TC001
 from .triggers import is_schedulable, parse_trigger
 
@@ -19,6 +20,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_file_watch_trigger(trigger: Any) -> bool:
+    """Check if trigger is a file-watch trigger.
+
+    Args:
+        trigger: The trigger to check.
+
+    Returns:
+        True if file-watch trigger, False otherwise.
+    """
+    return getattr(trigger, "type", None) == "file-watch"
+
+
 class ScheduleManagerError(Exception):
     """Error in schedule management."""
 
@@ -26,14 +39,15 @@ class ScheduleManagerError(Exception):
 class ScheduleManager:
     """High-level interface for managing workflow schedules.
 
-    Coordinates between the APScheduler service and the database
-    for persistent schedule management.
+    Coordinates between the APScheduler service, file watcher service,
+    and the database for persistent schedule management.
     """
 
     def __init__(
         self,
         scheduler: SchedulerService,
         db: Database,
+        file_watcher: FileWatchService | None = None,
         workflows_dir: Path | None = None,
     ) -> None:
         """Initialize the schedule manager.
@@ -41,10 +55,12 @@ class ScheduleManager:
         Args:
             scheduler: APScheduler service instance.
             db: Database for schedule persistence.
+            file_watcher: Optional file watch service instance.
             workflows_dir: Directory containing workflow files.
         """
         self._scheduler = scheduler
         self._db = db
+        self._file_watcher = file_watcher
         self._workflows_dir = workflows_dir or (Path.home() / ".flowpilot" / "workflows")
         self._parser = WorkflowParser()
 
@@ -96,75 +112,126 @@ class ScheduleManager:
             workflow_name: Name of the workflow to enable.
 
         Returns:
-            Dictionary with job_id and next_run time.
+            Dictionary with scheduling results for all trigger types.
 
         Raises:
             ScheduleManagerError: If workflow has no schedulable triggers.
         """
         workflow, path = self._load_workflow(workflow_name)
 
-        # Find schedulable triggers (cron, interval)
+        # Find schedulable triggers (cron, interval) and file-watch triggers
         schedulable = [t for t in workflow.triggers if is_schedulable(t)]
+        file_watches = [t for t in workflow.triggers if _is_file_watch_trigger(t)]
 
-        if not schedulable:
-            msg = f"Workflow '{workflow_name}' has no schedulable triggers (cron or interval)"
+        if not schedulable and not file_watches:
+            msg = (
+                f"Workflow '{workflow_name}' has no schedulable triggers "
+                "(cron, interval, or file-watch)"
+            )
             raise ScheduleManagerError(msg)
 
-        # Use the first schedulable trigger
-        trigger_config = schedulable[0]
-        ap_trigger = parse_trigger(trigger_config)
+        result: dict[str, Any] = {
+            "workflow_name": workflow_name,
+            "scheduled": [],
+            "file_watches": [],
+        }
 
-        # Schedule with APScheduler
-        job_id = self._scheduler.schedule_workflow(
-            workflow,
-            ap_trigger,
-            workflow_path=str(path),
-        )
+        # Schedule cron/interval triggers with APScheduler
+        trigger_config = None
+        next_run = None
+        if schedulable:
+            trigger_config = schedulable[0]
+            ap_trigger = parse_trigger(trigger_config)
+
+            job_id = self._scheduler.schedule_workflow(
+                workflow,
+                ap_trigger,
+                workflow_path=str(path),
+            )
+
+            next_run = self._scheduler.get_next_run(workflow_name)
+            result["scheduled"].append(
+                {
+                    "type": trigger_config.type,
+                    "job_id": job_id,
+                    "next_run": next_run,
+                    "trigger": str(ap_trigger),
+                }
+            )
+
+        # Add file watches
+        if file_watches and self._file_watcher:
+            for fw_trigger in file_watches:
+                watch_id = self._file_watcher.add_watch(
+                    workflow_name,
+                    fw_trigger,
+                    str(path),
+                )
+                result["file_watches"].append(
+                    {
+                        "watch_id": watch_id,
+                        "path": fw_trigger.path,
+                        "events": fw_trigger.events,
+                        "pattern": fw_trigger.pattern,
+                    }
+                )
 
         # Update database
-        next_run = self._scheduler.get_next_run(workflow_name)
-
         with self._db.session_scope() as session:
             repo = ScheduleRepository(session)
             schedule = repo.get_by_workflow(workflow_name)
+
+            # Build combined trigger config for storage
+            combined_config = {}
+            if trigger_config:
+                combined_config["schedule"] = trigger_config.model_dump()
+            if file_watches:
+                combined_config["file_watches"] = [fw.model_dump() for fw in file_watches]
 
             if schedule is None:
                 schedule = Schedule(
                     workflow_name=workflow_name,
                     workflow_path=str(path),
                     enabled=1,
-                    trigger_config=trigger_config.model_dump(),
+                    trigger_config=combined_config,
                     next_run=next_run,
                 )
                 repo.create(schedule)
             else:
                 schedule.enabled = 1
                 schedule.workflow_path = str(path)
-                schedule.trigger_config = trigger_config.model_dump()
+                schedule.trigger_config = combined_config
                 schedule.next_run = next_run
                 schedule.updated_at = datetime.now(UTC)
                 repo.update(schedule)
 
         logger.info(f"Enabled schedule for workflow: {workflow_name}")
 
-        return {
-            "job_id": job_id,
-            "workflow_name": workflow_name,
-            "next_run": next_run,
-            "trigger": str(ap_trigger),
-        }
+        return result
 
-    def disable_workflow(self, workflow_name: str) -> bool:
+    def disable_workflow(self, workflow_name: str) -> dict[str, Any]:
         """Disable scheduling for a workflow.
 
         Args:
             workflow_name: Name of the workflow to disable.
 
         Returns:
-            True if disabled, False if not found.
+            Dictionary with disabled trigger info.
         """
-        removed = self._scheduler.remove_schedule(workflow_name)
+        result: dict[str, Any] = {
+            "workflow_name": workflow_name,
+            "schedule_removed": False,
+            "file_watch_removed": False,
+        }
 
+        # Remove APScheduler job
+        result["schedule_removed"] = self._scheduler.remove_schedule(workflow_name)
+
+        # Remove file watch
+        if self._file_watcher:
+            result["file_watch_removed"] = self._file_watcher.remove_watch(workflow_name)
+
+        # Update database
         with self._db.session_scope() as session:
             repo = ScheduleRepository(session)
             schedule = repo.get_by_workflow(workflow_name)
@@ -175,10 +242,10 @@ class ScheduleManager:
                 schedule.updated_at = datetime.now(UTC)
                 repo.update(schedule)
 
-        if removed:
+        if result["schedule_removed"] or result["file_watch_removed"]:
             logger.info(f"Disabled schedule for workflow: {workflow_name}")
 
-        return removed
+        return result
 
     def pause_workflow(self, workflow_name: str) -> bool:
         """Pause a workflow schedule without removing it.
@@ -241,21 +308,29 @@ class ScheduleManager:
         Returns:
             List of schedule status dictionaries.
         """
+        # Get active file watches
+        file_watches = {}
+        if self._file_watcher:
+            for watch in self._file_watcher.get_watches():
+                file_watches[watch["workflow"]] = watch
+
         if workflow_name:
             # Get status for specific workflow
             schedule_info = self._scheduler.get_schedule(workflow_name)
+            file_watch_info = file_watches.get(workflow_name)
 
             with self._db.session_scope() as session:
                 repo = ScheduleRepository(session)
                 db_schedule = repo.get_by_workflow(workflow_name)
 
-                if schedule_info:
+                if schedule_info or file_watch_info:
                     return [
                         {
                             "name": workflow_name,
-                            "enabled": not schedule_info["paused"],
-                            "next_run": schedule_info["next_run"],
-                            "trigger": schedule_info["trigger"],
+                            "enabled": True,
+                            "next_run": schedule_info["next_run"] if schedule_info else None,
+                            "trigger": schedule_info["trigger"] if schedule_info else None,
+                            "file_watch": file_watch_info,
                             "last_run": db_schedule.last_run if db_schedule else None,
                             "last_status": db_schedule.last_status if db_schedule else None,
                         }
@@ -270,6 +345,7 @@ class ScheduleManager:
                             "trigger": str(db_schedule.trigger_config)
                             if db_schedule.trigger_config
                             else None,
+                            "file_watch": None,
                             "last_run": db_schedule.last_run,
                             "last_status": db_schedule.last_status,
                         }
@@ -299,10 +375,28 @@ class ScheduleManager:
                         "enabled": not sched["paused"],
                         "next_run": sched["next_run"],
                         "trigger": sched["trigger"],
+                        "file_watch": file_watches.get(name),
                         "last_run": db_sched.last_run if db_sched else None,
                         "last_status": db_sched.last_status if db_sched else None,
                     }
                 )
+
+            # Add workflows with only file watches (no APScheduler job)
+            for name, watch_info in file_watches.items():
+                if name not in seen_names:
+                    seen_names.add(name)
+                    db_sched = all_db_schedules.get(name)
+                    result.append(
+                        {
+                            "name": name,
+                            "enabled": True,
+                            "next_run": None,
+                            "trigger": None,
+                            "file_watch": watch_info,
+                            "last_run": db_sched.last_run if db_sched else None,
+                            "last_status": db_sched.last_status if db_sched else None,
+                        }
+                    )
 
             # Add disabled schedules from database
             for name, db_sched in all_db_schedules.items():
@@ -315,6 +409,7 @@ class ScheduleManager:
                             "trigger": str(db_sched.trigger_config)
                             if db_sched.trigger_config
                             else None,
+                            "file_watch": None,
                             "last_run": db_sched.last_run,
                             "last_status": db_sched.last_status,
                         }
