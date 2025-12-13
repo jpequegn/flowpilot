@@ -1,0 +1,43 @@
+# Example workflow using Claude CLI node
+name: code-review-workflow
+description: Review code using Claude CLI
+
+inputs:
+  file_path:
+    type: string
+    required: true
+    description: Path to the file to review
+
+nodes:
+  - id: read-file
+    type: file-read
+    path: "{{ inputs.file_path }}"
+
+  - id: review-code
+    type: claude-cli
+    prompt: |
+      Review this code for bugs and security issues:
+
+      {{ nodes.read_file.output }}
+
+      Please provide:
+      1. A summary of what the code does
+      2. Any bugs or issues found
+      3. Security concerns
+      4. Suggestions for improvement
+    model: sonnet
+    timeout: 300
+    depends_on:
+      - read-file
+
+  - id: save-review
+    type: file-write
+    path: "{{ inputs.file_path }}.review.md"
+    content: |
+      # Code Review
+
+      ## File: {{ inputs.file_path }}
+
+      {{ nodes.review_code.output }}
+    depends_on:
+      - review-code
