@@ -1,0 +1,68 @@
+# Example workflow using Claude API node
+name: claude-api-test
+description: Test workflow for Claude API integration
+
+triggers:
+  - type: manual
+
+inputs:
+  text:
+    type: string
+    description: Text to process
+    default: "Hello, world!"
+
+nodes:
+  # Simple API call
+  - id: simple-call
+    type: claude-api
+    prompt: "Say hello back: {{ inputs.text }}"
+    max_tokens: 100
+
+  # Call with system prompt
+  - id: with-system
+    type: claude-api
+    prompt: "What is 2+2?"
+    system: "You are a math tutor. Be concise."
+    temperature: 0.3
+    depends_on:
+      - simple-call
+
+  # JSON output
+  - id: json-output
+    type: claude-api
+    prompt: "Extract any numbers from: {{ inputs.text }}"
+    output_format: json
+    json_schema:
+      type: object
+      properties:
+        numbers:
+          type: array
+          items:
+            type: number
+    depends_on:
+      - with-system
+
+  # Using different model
+  - id: haiku-call
+    type: claude-api
+    prompt: "Summarize in one word: {{ nodes.simple_call.output }}"
+    model: claude-3-haiku-20240307
+    max_tokens: 10
+    depends_on:
+      - simple-call
+
+  # With all parameters
+  - id: full-params
+    type: claude-api
+    prompt: "Generate a creative response"
+    model: claude-sonnet-4-20250514
+    system: "You are creative and helpful."
+    max_tokens: 500
+    temperature: 0.8
+    top_p: 0.95
+    stop_sequences:
+      - "END"
+      - "DONE"
+    timeout: 60
+    depends_on:
+      - haiku-call

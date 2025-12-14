@@ -120,16 +120,38 @@ class ClaudeCliNode(BaseNode):
 
 
 class ClaudeApiNode(BaseNode):
-    """Call Claude API directly."""
+    """Call Claude API directly via Anthropic SDK."""
 
     type: Literal["claude-api"]
-    prompt: str = Field(..., description="Prompt to send")
-    model: str = Field(default="claude-sonnet-4-20250514", description="Model ID")
+    prompt: str = Field(..., description="User message (Jinja2 templated)")
+
+    # Model configuration
+    model: str = Field(default="claude-sonnet-4-20250514", description="Claude model ID")
+
+    # System prompt
     system: str | None = Field(default=None, description="System prompt")
-    max_tokens: int = Field(default=4096, ge=1, description="Maximum tokens")
+
+    # Generation parameters
+    max_tokens: int = Field(default=4096, ge=1, description="Maximum tokens for response")
     temperature: float | None = Field(default=None, ge=0.0, le=1.0, description="Temperature")
-    timeout: int = Field(default=120, ge=1, description="Timeout in seconds")
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Top-p sampling")
+    top_k: int | None = Field(default=None, ge=1, description="Top-k sampling")
+
+    # Output control
+    stop_sequences: list[str] | None = Field(default=None, description="Stop sequences")
     output_format: Literal["text", "json"] = Field(default="text", description="Output format")
+    json_schema: dict[str, Any] | None = Field(default=None, description="JSON schema for output")
+
+    # Execution
+    timeout: int = Field(default=120, ge=1, description="API timeout in seconds")
+
+    # Advanced
+    metadata: dict[str, str] | None = Field(default=None, description="Request metadata")
+
+    # Multi-turn (within same node execution)
+    messages: list[dict[str, Any]] | None = Field(
+        default=None, description="Override with full message history"
+    )
 
 
 # Union type for all nodes with discriminator
