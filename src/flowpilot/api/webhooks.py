@@ -104,9 +104,7 @@ def unregister_webhook(workflow_name: str) -> bool:
         True if any webhooks were removed, False otherwise.
     """
     to_remove = [
-        path
-        for path, config in _webhooks.items()
-        if config["workflow_name"] == workflow_name
+        path for path, config in _webhooks.items() if config["workflow_name"] == workflow_name
     ]
 
     for path in to_remove:

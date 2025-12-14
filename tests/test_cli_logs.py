@@ -63,7 +63,9 @@ def create_execution(
     """Create a test execution in the database and return its ID."""
     execution_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
-    finished_at = datetime.now(UTC) if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED) else None
+    finished_at = (
+        datetime.now(UTC) if status in (ExecutionStatus.SUCCESS, ExecutionStatus.FAILED) else None
+    )
 
     with db.session_scope() as session:
         repo = ExecutionRepository(session)
@@ -137,7 +139,9 @@ class TestLogsRecent:
     def test_logs_single_execution(self, runner: CliRunner, db: Database) -> None:
         """Test logs shows single execution."""
         execution_id = create_execution(db, "test-workflow", ExecutionStatus.SUCCESS)
-        create_node_execution(db, execution_id, "echo-node", "shell", "success", stdout="Hello World")
+        create_node_execution(
+            db, execution_id, "echo-node", "shell", "success", stdout="Hello World"
+        )
 
         result = runner.invoke(app, ["logs", "test-workflow"])
         assert result.exit_code == 0
@@ -208,7 +212,9 @@ class TestLogsSpecificExecution:
     def test_logs_by_full_id(self, runner: CliRunner, db: Database) -> None:
         """Test logs -e with full execution ID."""
         execution_id = create_execution(db, "test-workflow", ExecutionStatus.SUCCESS)
-        create_node_execution(db, execution_id, "node-1", "shell", "success", stdout="Specific output")
+        create_node_execution(
+            db, execution_id, "node-1", "shell", "success", stdout="Specific output"
+        )
 
         result = runner.invoke(app, ["logs", "test-workflow", "-e", execution_id])
         assert result.exit_code == 0
@@ -361,7 +367,9 @@ class TestLogsEdgeCases:
 
     def test_logs_running_execution(self, runner: CliRunner, db: Database) -> None:
         """Test logs shows running execution."""
-        execution_id = create_execution(db, "test-workflow", ExecutionStatus.RUNNING, duration_ms=None)
+        execution_id = create_execution(
+            db, "test-workflow", ExecutionStatus.RUNNING, duration_ms=None
+        )
         create_node_execution(db, execution_id, "node-1", "shell", "running")
 
         result = runner.invoke(app, ["logs", "test-workflow"])
