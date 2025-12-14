@@ -9,10 +9,12 @@ from .webhooks import (
     get_webhook,
     get_webhooks,
     register_webhook,
-    router as webhook_router,
     set_global_webhook_runner,
     set_workflows_dir,
     unregister_webhook,
+)
+from .webhooks import (
+    router as webhook_router,
 )
 
 __all__ = [
