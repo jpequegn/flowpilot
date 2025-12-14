@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from graphlib import CycleError, TopologicalSorter
@@ -14,15 +15,20 @@ from flowpilot.models import (
     LoopNode,
     Node,
     ParallelNode,
+    RetryConfig,
     Workflow,
 )
 
 from .context import ExecutionContext, NodeResult
+from .error_reporter import ErrorReport, get_error_reporter
 from .executor import ExecutorRegistry, get_node_timeout
+from .retry import RetryExecutor
 from .template import TemplateEngine
 
 if TYPE_CHECKING:
     from flowpilot.storage import Database
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowRunnerError(Exception):
@@ -36,14 +42,21 @@ class CircularDependencyError(WorkflowRunnerError):
 class WorkflowRunner:
     """Executes workflows by running nodes in dependency order."""
 
-    def __init__(self, db: Database | None = None) -> None:
+    def __init__(
+        self,
+        db: Database | None = None,
+        default_retry_config: RetryConfig | None = None,
+    ) -> None:
         """Initialize the workflow runner.
 
         Args:
             db: Optional database for persisting execution records.
+            default_retry_config: Default retry configuration for nodes without explicit config.
         """
         self.template_engine = TemplateEngine()
         self._db = db
+        self._retry_executor = RetryExecutor(default_retry_config)
+        self._error_reporter = get_error_reporter()
 
     async def run(
         self,
@@ -80,6 +93,13 @@ class WorkflowRunner:
         # Create execution record in database
         self._create_execution_record(context, workflow_path or "", trigger_type)
 
+        # Create error report for this execution
+        error_report = self._error_reporter.create_report(
+            execution_id=context.execution_id,
+            workflow_name=workflow.name,
+            total_nodes=len(workflow.nodes),
+        )
+
         try:
             # Build and validate dependency graph
             graph = self._build_dependency_graph(workflow)
@@ -102,18 +122,28 @@ class WorkflowRunner:
                     context.set_node_result(node_id, NodeResult.skipped("Condition not met"))
                     continue
 
-                # Execute the node
-                result = await self._execute_node(node, context, workflow)
+                # Execute the node with retry and fallback support
+                result = await self._execute_node(node, context, workflow, error_report)
                 context.set_node_result(node_id, result)
 
                 # Check if we should stop on error
-                if result.status == "error" and workflow.settings.on_error == "stop":
+                # Stop if: error AND on_error=stop AND NOT continue_on_error
+                should_stop = (
+                    result.status == "error"
+                    and workflow.settings.on_error == "stop"
+                    and not node.continue_on_error
+                    and not result.data.get("continued_on_error", False)
+                )
+
+                if should_stop:
                     context.mark_finished("error")
+                    error_report.finish()
                     self._finalize_execution_record(context, workflow)
                     return context
 
             # Mark successful completion
             context.mark_finished("error" if context.has_errors else "success")
+            error_report.finish()
 
         except CircularDependencyError:
             context.mark_finished("error")
@@ -343,13 +373,15 @@ class WorkflowRunner:
         node: Node,
         context: ExecutionContext,
         workflow: Workflow,
+        error_report: ErrorReport | None = None,
     ) -> NodeResult:
-        """Execute a single node.
+        """Execute a single node with retry and fallback support.
 
         Args:
             node: The node to execute.
             context: Current execution context.
             workflow: The parent workflow.
+            error_report: Optional error report to record errors.
 
         Returns:
             NodeResult with execution outcome.
@@ -375,18 +407,111 @@ class WorkflowRunner:
             )
 
             # Recreate node with rendered values
-            # Note: This is a simplified approach - in production you might
-            # want to handle this more carefully to preserve type information
             rendered_node = type(node).model_validate(rendered_data)
 
-            # Execute with timeout
-            timeout = get_node_timeout(node)
-            result = await executor.execute_with_timeout(rendered_node, context, timeout)
+            # Execute with retry logic if configured
+            if node.retry is not None:
+                result = await self._retry_executor.execute_with_retry(
+                    executor, rendered_node, context
+                )
+            else:
+                # Execute with timeout only
+                timeout = get_node_timeout(node)
+                result = await executor.execute_with_timeout(rendered_node, context, timeout)
+
+            # Handle failure with fallback
+            if result.status == "error" and node.fallback:
+                fallback_result = await self._execute_fallback(
+                    node, context, workflow, result, error_report
+                )
+                if fallback_result is not None:
+                    return fallback_result
+
+            # Handle continue_on_error
+            if result.status == "error":
+                # Record error in report
+                if error_report:
+                    error_report.add_error(
+                        node_id=node.id,
+                        error=result.error_message or "Unknown error",
+                        category=result.data.get("final_error_category", "unknown"),
+                        attempts=result.data.get("total_attempts", 1),
+                        fallback_used=result.data.get("fallback_used", False),
+                        continued=node.continue_on_error,
+                    )
+
+                if node.continue_on_error:
+                    result.data["continued_on_error"] = True
+                    logger.info(f"Node {node.id} failed but continue_on_error=True, continuing")
 
             return result
 
         except Exception as e:
-            return NodeResult.error(str(e), started_at=started_at)
+            error_result = NodeResult.error(str(e), started_at=started_at)
+            if error_report:
+                error_report.add_error(
+                    node_id=node.id,
+                    error=str(e),
+                    category="unknown",
+                    attempts=1,
+                    continued=node.continue_on_error,
+                )
+            return error_result
+
+    async def _execute_fallback(
+        self,
+        node: Node,
+        context: ExecutionContext,
+        workflow: Workflow,
+        original_result: NodeResult,
+        error_report: ErrorReport | None = None,
+    ) -> NodeResult | None:
+        """Execute fallback node if available.
+
+        Args:
+            node: The original failed node.
+            context: Current execution context.
+            workflow: The parent workflow.
+            original_result: Result from the failed node.
+            error_report: Optional error report.
+
+        Returns:
+            Fallback result if successful, None if fallback fails or not available.
+        """
+        fallback_node = self._get_node(workflow, node.fallback)
+        if fallback_node is None:
+            logger.warning(f"Fallback node '{node.fallback}' not found for node '{node.id}'")
+            return None
+
+        logger.info(f"Executing fallback node '{node.fallback}' for failed node '{node.id}'")
+
+        # Execute fallback (without recursive fallback to prevent chains)
+        fallback_node_copy = fallback_node.model_copy(update={"fallback": None})
+        fallback_result = await self._execute_node(
+            fallback_node_copy, context, workflow, error_report
+        )
+
+        if fallback_result.status == "success":
+            # Merge information into result
+            fallback_result.data["fallback_from"] = node.id
+            fallback_result.data["fallback_used"] = True
+            fallback_result.data["original_error"] = original_result.error_message
+
+            # Record in error report
+            if error_report:
+                error_report.add_error(
+                    node_id=node.id,
+                    error=original_result.error_message or "Unknown error",
+                    category=original_result.data.get("final_error_category", "unknown"),
+                    attempts=original_result.data.get("total_attempts", 1),
+                    fallback_used=True,
+                )
+
+            return fallback_result
+
+        # Fallback also failed
+        logger.warning(f"Fallback node '{node.fallback}' also failed")
+        return None
 
     def validate_workflow(self, workflow: Workflow) -> list[str]:
         """Validate workflow before execution.
