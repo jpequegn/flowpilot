@@ -12,6 +12,7 @@ from .nodes import (
     LoopNode,
     Node,
     ParallelNode,
+    RetryConfig,
     ShellNode,
 )
 from .triggers import (
@@ -41,6 +42,7 @@ __all__ = [
     "ManualTrigger",
     "Node",
     "ParallelNode",
+    "RetryConfig",
     "ShellNode",
     "Trigger",
     "WebhookTrigger",

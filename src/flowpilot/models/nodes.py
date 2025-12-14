@@ -7,6 +7,26 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class RetryConfig(BaseModel):
+    """Retry configuration for nodes."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_attempts: int = Field(default=3, ge=1, le=10, description="Maximum retry attempts")
+    initial_delay: float = Field(
+        default=1.0, ge=0.1, le=60.0, description="Initial delay in seconds"
+    )
+    max_delay: float = Field(default=60.0, ge=1.0, le=600.0, description="Maximum delay in seconds")
+    exponential_base: float = Field(
+        default=2.0, ge=1.0, le=4.0, description="Exponential backoff base"
+    )
+    jitter: bool = Field(default=True, description="Add randomness to delays")
+    retry_on_transient: bool = Field(default=True, description="Retry on transient errors")
+    retry_on_resource: bool = Field(
+        default=True, description="Retry on resource errors (rate limits)"
+    )
+
+
 class BaseNode(BaseModel):
     """Base class for all workflow nodes."""
 
@@ -18,6 +38,9 @@ class BaseNode(BaseModel):
         description="Unique node identifier (lowercase, alphanumeric, hyphens)",
     )
     depends_on: list[str] = Field(default_factory=list, description="Node IDs this node depends on")
+    retry: RetryConfig | None = Field(default=None, description="Retry configuration")
+    fallback: str | None = Field(default=None, description="Node ID to execute on failure")
+    continue_on_error: bool = Field(default=False, description="Don't stop workflow on error")
 
 
 class ShellNode(BaseNode):
