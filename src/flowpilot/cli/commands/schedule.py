@@ -12,6 +12,7 @@ from flowpilot.cli.utils import get_flowpilot_dir
 
 def _get_schedule_manager() -> Any:
     """Get a ScheduleManager instance."""
+    from flowpilot.api import WebhookService
     from flowpilot.scheduler import FileWatchService, ScheduleManager, SchedulerService
     from flowpilot.storage import Database
 
@@ -34,7 +35,10 @@ def _get_schedule_manager() -> Any:
     # Create file watcher service
     file_watcher = FileWatchService()
 
-    return ScheduleManager(scheduler, db, file_watcher, workflows_dir)
+    # Create webhook service
+    webhook_service = WebhookService(workflows_dir)
+
+    return ScheduleManager(scheduler, db, file_watcher, webhook_service, workflows_dir)
 
 
 @app.command()
@@ -43,7 +47,7 @@ def enable(
 ) -> None:
     """Enable scheduling for a workflow.
 
-    Schedules the workflow based on its cron, interval, or file-watch triggers.
+    Schedules the workflow based on its cron, interval, file-watch, or webhook triggers.
     The workflow must have at least one schedulable trigger defined.
 
     Examples:
@@ -71,6 +75,12 @@ def enable(
             console.print(f"  File watch: {fw['path']}")
             console.print(f"    Events: {events}, Pattern: {pattern}")
 
+        # Show webhooks
+        for wh in result.get("webhooks", []):
+            auth_status = "🔒" if wh.get("has_secret") else "🔓"
+            console.print(f"  Webhook: {wh['path']} {auth_status}")
+            console.print("    POST to /hooks" + wh["path"] + " to trigger")
+
     except ScheduleManagerError as e:
         console.print(f"[red]Error:[/] {e}")
         raise typer.Exit(1)
@@ -82,8 +92,8 @@ def disable(
 ) -> None:
     """Disable scheduling for a workflow.
 
-    Removes the workflow from the scheduler and file watcher. The workflow
-    can still be run manually with `flowpilot run`.
+    Removes the workflow from the scheduler, file watcher, and webhook registry.
+    The workflow can still be run manually with `flowpilot run`.
 
     Examples:
         flowpilot disable my-workflow
@@ -92,12 +102,14 @@ def disable(
 
     result = manager.disable_workflow(name)
 
-    if result["schedule_removed"] or result["file_watch_removed"]:
+    if result["schedule_removed"] or result["file_watch_removed"] or result["webhook_removed"]:
         console.print(f"[green]✓[/] Disabled schedule for [cyan]{name}[/]")
         if result["schedule_removed"]:
             console.print("  Removed cron/interval schedule")
         if result["file_watch_removed"]:
             console.print("  Removed file watch")
+        if result["webhook_removed"]:
+            console.print("  Removed webhook")
     else:
         console.print(f"[yellow]![/] No schedule found for [cyan]{name}[/]")
 
@@ -117,7 +129,7 @@ def status(
     """Show schedule status for workflows.
 
     Displays enabled schedules with next run times, last run status,
-    trigger configuration, and file watches.
+    trigger configuration, file watches, and webhooks.
 
     Examples:
         flowpilot status
@@ -135,6 +147,7 @@ def status(
                 "next_run": s["next_run"].isoformat() if s["next_run"] else None,
                 "trigger": s["trigger"],
                 "file_watch": s.get("file_watch"),
+                "webhook": s.get("webhook"),
                 "last_run": s["last_run"].isoformat() if s["last_run"] else None,
                 "last_status": s["last_status"],
             }
@@ -155,7 +168,7 @@ def status(
     table.add_column("Workflow", style="cyan")
     table.add_column("Status")
     table.add_column("Type")
-    table.add_column("Next Run / Watch Path")
+    table.add_column("Trigger Info")
     table.add_column("Last Run")
     table.add_column("Last Status")
 
@@ -164,23 +177,33 @@ def status(
 
         # Determine trigger type and info
         file_watch = sched.get("file_watch")
+        webhook = sched.get("webhook")
         trigger = sched.get("trigger")
 
-        if file_watch and trigger:
-            trigger_type = "mixed"
-            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+        # Build trigger type string
+        types = []
+        if trigger:
+            types.append("schedule")
+        if file_watch:
+            types.append("file")
+        if webhook:
+            types.append("webhook")
+        trigger_type = "+".join(types) if types else "-"
+
+        # Build trigger info string
+        if trigger and sched["next_run"]:
+            trigger_info = _format_datetime(sched["next_run"])
         elif file_watch:
-            trigger_type = "file-watch"
             watch_path = file_watch.get("path", "-")
-            if len(watch_path) > 25:
-                watch_path = "..." + watch_path[-22:]
-            next_run_or_path = f"📁 {watch_path}"
-        elif trigger:
-            trigger_type = "schedule"
-            next_run_or_path = _format_datetime(sched["next_run"]) if sched["next_run"] else "-"
+            if len(watch_path) > 20:
+                watch_path = "..." + watch_path[-17:]
+            trigger_info = f"📁 {watch_path}"
+        elif webhook:
+            webhook_path = webhook.get("path", "-")
+            auth_icon = "🔒" if webhook.get("has_secret") else "🔓"
+            trigger_info = f"🌐 {webhook_path} {auth_icon}"
         else:
-            trigger_type = "-"
-            next_run_or_path = "-"
+            trigger_info = "-"
 
         last_run = _format_datetime(sched["last_run"]) if sched["last_run"] else "-"
 
@@ -197,7 +220,7 @@ def status(
             sched["name"],
             status_display,
             trigger_type,
-            next_run_or_path,
+            trigger_info,
             last_run,
             last_status,
         )

@@ -1,0 +1,14 @@
+name: github-webhook
+description: Handle GitHub push events
+
+triggers:
+  - type: webhook
+    path: /github-push
+    secret: ${GITHUB_WEBHOOK_SECRET}
+
+nodes:
+  - id: log-push
+    type: shell
+    command: |
+      echo "Push to {{ inputs._webhook.body.repository.full_name }}"
+      echo "By: {{ inputs._webhook.body.pusher.name }}"
