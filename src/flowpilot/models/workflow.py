@@ -77,8 +77,12 @@ class Workflow(BaseModel):
                     )
 
             # Check loop node references
-            if isinstance(node, LoopNode) and node.do not in node_ids:
-                errors.append(f"Loop node '{node.id}' references unknown 'do' node '{node.do}'")
+            if isinstance(node, LoopNode):
+                for do_node_id in node.do:
+                    if do_node_id not in node_ids:
+                        errors.append(
+                            f"Loop node '{node.id}' references unknown 'do' node '{do_node_id}'"
+                        )
 
             # Check parallel node references
             if isinstance(node, ParallelNode):

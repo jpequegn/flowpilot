@@ -9,6 +9,74 @@ from datetime import datetime
 from typing import Any, Literal
 
 
+class DotDict(dict[str, Any]):
+    """Dictionary that supports attribute-style access.
+
+    This allows expressions like `inputs.items` to access `inputs["items"]`
+    instead of the dict's .items() method.
+
+    Keys in the dictionary take precedence over dict methods.
+    """
+
+    # Dict methods that we want to preserve access to
+    _DICT_METHODS = frozenset(
+        {
+            "keys",
+            "values",
+            "get",
+            "pop",
+            "update",
+            "setdefault",
+            "clear",
+            "copy",
+            "fromkeys",
+            "popitem",
+        }
+    )
+
+    def __getattribute__(self, key: str) -> Any:
+        """Get attribute, preferring dict keys over methods."""
+        # Always allow access to private attributes and our class attributes
+        if key.startswith("_") or key == "_DICT_METHODS":
+            return super().__getattribute__(key)
+
+        # Check if key exists in dict first (takes precedence)
+        try:
+            if key in self:
+                value = self[key]
+                # Recursively wrap nested dicts
+                if isinstance(value, dict) and not isinstance(value, DotDict):
+                    return DotDict(value)
+                return value
+        except (KeyError, TypeError):
+            pass
+
+        # Fall back to normal attribute lookup (dict methods, etc.)
+        return super().__getattribute__(key)
+
+    def __getattr__(self, key: str) -> Any:
+        """Get item by attribute access (fallback for missing attributes)."""
+        try:
+            value = self[key]
+            # Recursively wrap nested dicts
+            if isinstance(value, dict) and not isinstance(value, DotDict):
+                return DotDict(value)
+            return value
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' has no attribute '{key}'") from e
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """Set item by attribute access."""
+        self[key] = value
+
+    def __delattr__(self, key: str) -> None:
+        """Delete item by attribute access."""
+        try:
+            del self[key]
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' has no attribute '{key}'") from e
+
+
 @dataclass
 class NodeResult:
     """Result of executing a single node."""
@@ -98,27 +166,40 @@ class ExecutionContext:
     started_at: datetime = field(default_factory=datetime.now)
     finished_at: datetime | None = None
     status: Literal["running", "success", "error", "cancelled"] = "running"
+    # Loop variables - available during loop iterations
+    loop_variables: dict[str, Any] = field(default_factory=dict)
 
     def get_template_context(self) -> dict[str, Any]:
-        """Return context dict for Jinja2 templating."""
-        return {
-            "inputs": self.inputs,
-            "nodes": {
-                # Replace hyphens with underscores for template access
-                node_id.replace("-", "_"): {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "output": result.output,
-                    "data": result.data,
-                    "status": result.status,
+        """Return context dict for Jinja2 templating.
+
+        Wraps dictionaries in DotDict to support attribute-style access
+        (e.g., `inputs.items` instead of `inputs['items']`).
+        """
+        ctx: dict[str, Any] = {
+            "inputs": DotDict(self.inputs),
+            "nodes": DotDict(
+                {
+                    # Replace hyphens with underscores for template access
+                    node_id.replace("-", "_"): DotDict(
+                        {
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                            "output": result.output,
+                            "data": DotDict(result.data) if result.data else {},
+                            "status": result.status,
+                        }
+                    )
+                    for node_id, result in self.nodes.items()
                 }
-                for node_id, result in self.nodes.items()
-            },
-            "env": dict(os.environ),
+            ),
+            "env": DotDict(dict(os.environ)),
             "date": lambda fmt: datetime.now().strftime(fmt),
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
         }
+        # Add loop variables to template context
+        ctx.update(self.loop_variables)
+        return ctx
 
     def set_node_result(self, node_id: str, result: NodeResult) -> None:
         """Set the result for a node."""
@@ -143,3 +224,24 @@ class ExecutionContext:
     def has_errors(self) -> bool:
         """Check if any node has errors."""
         return any(r.status == "error" for r in self.nodes.values())
+
+    def set_loop_variable(self, name: str, value: Any) -> None:
+        """Set a loop variable for use in child node templates.
+
+        Args:
+            name: Variable name (e.g., 'item', 'index').
+            value: Variable value.
+        """
+        self.loop_variables[name] = value
+
+    def clear_loop_variables(self, *names: str) -> None:
+        """Clear loop variables.
+
+        Args:
+            *names: Variable names to clear. If empty, clears all.
+        """
+        if names:
+            for name in names:
+                self.loop_variables.pop(name, None)
+        else:
+            self.loop_variables.clear()

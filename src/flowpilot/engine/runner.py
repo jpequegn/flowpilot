@@ -122,8 +122,15 @@ class WorkflowRunner:
                     context.set_node_result(node_id, NodeResult.skipped("Condition not met"))
                     continue
 
-                # Execute the node with retry and fallback support
-                result = await self._execute_node(node, context, workflow, error_report)
+                # Handle loop nodes specially
+                if isinstance(node, LoopNode):
+                    result = await self._execute_loop_node(
+                        node, context, workflow, error_report
+                    )
+                else:
+                    # Execute the node with retry and fallback support
+                    result = await self._execute_node(node, context, workflow, error_report)
+
                 context.set_node_result(node_id, result)
 
                 # Check if we should stop on error
@@ -512,6 +519,171 @@ class WorkflowRunner:
         # Fallback also failed
         logger.warning(f"Fallback node '{node.fallback}' also failed")
         return None
+
+    async def _execute_loop_node(
+        self,
+        node: LoopNode,
+        context: ExecutionContext,
+        workflow: Workflow,
+        error_report: ErrorReport | None = None,
+    ) -> NodeResult:
+        """Execute a loop node, running child nodes for each iteration.
+
+        Args:
+            node: The loop node to execute.
+            context: Current execution context.
+            workflow: The parent workflow.
+            error_report: Optional error report to record errors.
+
+        Returns:
+            NodeResult with loop execution results.
+        """
+        started_at = datetime.now()
+
+        try:
+            # First, execute the loop node itself to resolve for_each expression
+            loop_result = await self._execute_node(node, context, workflow, error_report)
+
+            if loop_result.status == "error":
+                return loop_result
+
+            # Get loop configuration from result
+            loop_items = loop_result.data.get("loop_items", [])
+            as_var = loop_result.data.get("as_var", "item")
+            index_var = loop_result.data.get("index_var", "index")
+            child_node_ids = loop_result.data.get("child_nodes", [])
+            break_if = loop_result.data.get("break_if")
+
+            # Handle empty loop
+            if not loop_items:
+                return NodeResult(
+                    status="success",
+                    output={"iterations": 0, "items_processed": []},
+                    data={
+                        "iterations": 0,
+                        "total_items": 0,
+                        "items_processed": [],
+                        "break_triggered": False,
+                    },
+                    duration_ms=self._duration_ms(started_at),
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                )
+
+            # Execute iterations
+            items_processed: list[dict[str, Any]] = []
+            break_triggered = False
+
+            for index, item in enumerate(loop_items):
+                # Set loop variables in context
+                context.set_loop_variable(as_var, item)
+                context.set_loop_variable(index_var, index)
+
+                logger.debug(f"Loop {node.id}: iteration {index}, {as_var}={item}")
+
+                # Check break condition before executing children
+                if break_if and self._evaluate_break_condition(break_if, context):
+                    logger.debug(f"Loop {node.id}: break condition met at iteration {index}")
+                    break_triggered = True
+                    break
+
+                # Execute child nodes for this iteration
+                iteration_results: list[NodeResult] = []
+                iteration_failed = False
+
+                for child_id in child_node_ids:
+                    child_node = self._get_node(workflow, child_id)
+                    if child_node is None:
+                        logger.warning(f"Loop {node.id}: child node '{child_id}' not found")
+                        continue
+
+                    # Execute child node
+                    child_result = await self._execute_node(
+                        child_node, context, workflow, error_report
+                    )
+
+                    # Store result with iteration suffix
+                    iteration_node_id = f"{child_id}[{index}]"
+                    context.set_node_result(iteration_node_id, child_result)
+                    iteration_results.append(child_result)
+
+                    # Check if child failed
+                    if child_result.status == "error" and not child_node.continue_on_error:
+                        iteration_failed = True
+                        break
+
+                # Record iteration result
+                items_processed.append({
+                    "index": index,
+                    "item": item,
+                    "success": not iteration_failed,
+                    "child_results": len(iteration_results),
+                })
+
+                # Stop loop on iteration failure (fail-fast behavior)
+                if iteration_failed:
+                    context.clear_loop_variables(as_var, index_var)
+                    return NodeResult(
+                        status="error",
+                        error_message=f"Loop iteration {index} failed",
+                        output={"iterations": index + 1, "items_processed": items_processed},
+                        data={
+                            "iterations": index + 1,
+                            "total_items": len(loop_items),
+                            "items_processed": items_processed,
+                            "break_triggered": False,
+                            "failed_at_iteration": index,
+                        },
+                        duration_ms=self._duration_ms(started_at),
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                    )
+
+            # Clear loop variables after completion
+            context.clear_loop_variables(as_var, index_var)
+
+            return NodeResult(
+                status="success",
+                output={
+                    "iterations": len(items_processed),
+                    "items_processed": items_processed,
+                },
+                data={
+                    "iterations": len(items_processed),
+                    "total_items": len(loop_items),
+                    "items_processed": items_processed,
+                    "break_triggered": break_triggered,
+                },
+                duration_ms=self._duration_ms(started_at),
+                started_at=started_at,
+                finished_at=datetime.now(),
+            )
+
+        except Exception as e:
+            logger.exception(f"Loop {node.id}: unexpected error")
+            return NodeResult.error(f"Loop error: {e}", started_at=started_at)
+
+    def _evaluate_break_condition(
+        self, expr: str, context: ExecutionContext
+    ) -> bool:
+        """Evaluate a break condition expression.
+
+        Args:
+            expr: Break condition expression.
+            context: Execution context with loop variables.
+
+        Returns:
+            True if loop should break.
+        """
+        from flowpilot.engine.nodes.loop import LoopExecutor
+
+        executor = LoopExecutor()
+        return executor._evaluate_break_condition(expr, context.get_template_context())
+
+    @staticmethod
+    def _duration_ms(started_at: datetime) -> int:
+        """Calculate duration in milliseconds."""
+        return int((datetime.now() - started_at).total_seconds() * 1000)
 
     def validate_workflow(self, workflow: Workflow) -> list[str]:
         """Validate workflow before execution.

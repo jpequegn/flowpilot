@@ -138,7 +138,7 @@ class WorkflowParser:
 
             # Check loop references
             if isinstance(node, LoopNode):
-                referenced.add(node.do)
+                referenced.update(node.do)
 
             # Check parallel references
             if isinstance(node, ParallelNode):

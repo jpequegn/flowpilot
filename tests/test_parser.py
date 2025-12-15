@@ -289,7 +289,8 @@ nodes:
     type: loop
     for: items
     as: item
-    do: shell-node
+    do:
+      - shell-node
 
   - id: delay-node
     type: delay
