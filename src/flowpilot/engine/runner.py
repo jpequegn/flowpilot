@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -125,6 +126,10 @@ class WorkflowRunner:
                 # Handle loop nodes specially
                 if isinstance(node, LoopNode):
                     result = await self._execute_loop_node(
+                        node, context, workflow, error_report
+                    )
+                elif isinstance(node, ParallelNode):
+                    result = await self._execute_parallel_node(
                         node, context, workflow, error_report
                     )
                 else:
@@ -662,6 +667,265 @@ class WorkflowRunner:
         except Exception as e:
             logger.exception(f"Loop {node.id}: unexpected error")
             return NodeResult.error(f"Loop error: {e}", started_at=started_at)
+
+    async def _execute_parallel_node(
+        self,
+        node: ParallelNode,
+        context: ExecutionContext,
+        workflow: Workflow,
+        error_report: ErrorReport | None = None,
+    ) -> NodeResult:
+        """Execute a parallel node, running child nodes concurrently.
+
+        Args:
+            node: The parallel node to execute.
+            context: Current execution context.
+            workflow: The parent workflow.
+            error_report: Optional error report to record errors.
+
+        Returns:
+            NodeResult with parallel execution results.
+        """
+        started_at = datetime.now()
+
+        try:
+            # First, execute the parallel node itself to get configuration
+            parallel_result = await self._execute_node(
+                node, context, workflow, error_report
+            )
+
+            if parallel_result.status == "error":
+                return parallel_result
+
+            # Get parallel configuration from result
+            parallel_node_ids = parallel_result.data.get("parallel_nodes", [])
+            max_concurrency = parallel_result.data.get("max_concurrency")
+            fail_fast = parallel_result.data.get("fail_fast", True)
+            timeout_seconds = parallel_result.data.get("timeout")
+
+            # Handle empty parallel
+            if not parallel_node_ids:
+                return NodeResult(
+                    status="success",
+                    output={"completed": 0, "results": {}},
+                    data={
+                        "completed": 0,
+                        "total_nodes": 0,
+                        "results": {},
+                        "errors": [],
+                    },
+                    duration_ms=self._duration_ms(started_at),
+                    started_at=started_at,
+                    finished_at=datetime.now(),
+                )
+
+            # Create semaphore for concurrency limiting
+            concurrency_limit = max_concurrency or len(parallel_node_ids)
+            semaphore = asyncio.Semaphore(concurrency_limit)
+
+            # Results storage
+            results: dict[str, NodeResult] = {}
+            errors: list[str] = []
+            cancelled = False
+
+            async def execute_with_semaphore(node_id: str) -> tuple[str, NodeResult]:
+                """Execute a node with semaphore for concurrency control."""
+                nonlocal cancelled
+                async with semaphore:
+                    if cancelled and fail_fast:
+                        return node_id, NodeResult.skipped("Cancelled due to fail-fast")
+
+                    child_node = self._get_node(workflow, node_id)
+                    if child_node is None:
+                        logger.warning(
+                            f"Parallel {node.id}: child node '{node_id}' not found"
+                        )
+                        return node_id, NodeResult.error(f"Node '{node_id}' not found")
+
+                    result = await self._execute_node(
+                        child_node, context, workflow, error_report
+                    )
+                    return node_id, result
+
+            logger.debug(
+                f"Parallel {node.id}: executing {len(parallel_node_ids)} nodes "
+                f"(concurrency={concurrency_limit}, fail_fast={fail_fast})"
+            )
+
+            if fail_fast:
+                # Fail-fast mode: cancel remaining on first error
+                tasks = [
+                    asyncio.create_task(execute_with_semaphore(node_id))
+                    for node_id in parallel_node_ids
+                ]
+
+                try:
+                    if timeout_seconds:
+                        done, pending = await asyncio.wait(
+                            tasks,
+                            timeout=timeout_seconds,
+                            return_when=asyncio.FIRST_EXCEPTION,
+                        )
+                    else:
+                        done, pending = await asyncio.wait(
+                            tasks,
+                            return_when=asyncio.FIRST_EXCEPTION,
+                        )
+
+                    # Process completed tasks
+                    for task in done:
+                        try:
+                            node_id, result = task.result()
+                            results[node_id] = result
+                            context.set_node_result(node_id, result)
+
+                            if result.status == "error":
+                                errors.append(node_id)
+                                cancelled = True
+                        except Exception as e:
+                            logger.error(f"Task error: {e}")
+
+                    # If we have errors and pending tasks, cancel them
+                    if errors and pending:
+                        for task in pending:
+                            task.cancel()
+                        # Wait for cancellation
+                        await asyncio.gather(*pending, return_exceptions=True)
+
+                    # If timeout occurred with pending tasks
+                    if pending and not errors:
+                        for task in pending:
+                            task.cancel()
+                        await asyncio.gather(*pending, return_exceptions=True)
+                        return NodeResult(
+                            status="error",
+                            error_message=f"Parallel execution timed out after {timeout_seconds}s",
+                            data={
+                                "completed": len(results),
+                                "total_nodes": len(parallel_node_ids),
+                                "results": {k: v.status for k, v in results.items()},
+                                "errors": errors,
+                                "timed_out": True,
+                            },
+                            duration_ms=self._duration_ms(started_at),
+                            started_at=started_at,
+                            finished_at=datetime.now(),
+                        )
+
+                except TimeoutError:
+                    # Cancel all pending tasks
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    return NodeResult(
+                        status="error",
+                        error_message=f"Parallel execution timed out after {timeout_seconds}s",
+                        data={
+                            "completed": len(results),
+                            "total_nodes": len(parallel_node_ids),
+                            "results": {k: v.status for k, v in results.items()},
+                            "errors": errors,
+                            "timed_out": True,
+                        },
+                        duration_ms=self._duration_ms(started_at),
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                    )
+
+                # If fail-fast and we have errors, return error
+                if errors:
+                    return NodeResult(
+                        status="error",
+                        error_message=f"Parallel nodes failed: {', '.join(errors)}",
+                        data={
+                            "completed": len(results),
+                            "total_nodes": len(parallel_node_ids),
+                            "results": {k: v.status for k, v in results.items()},
+                            "errors": errors,
+                        },
+                        duration_ms=self._duration_ms(started_at),
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                    )
+
+            else:
+                # Wait-all mode: collect all results regardless of errors
+                tasks = [execute_with_semaphore(node_id) for node_id in parallel_node_ids]
+
+                try:
+                    if timeout_seconds:
+                        completed = await asyncio.wait_for(
+                            asyncio.gather(*tasks, return_exceptions=True),
+                            timeout=timeout_seconds,
+                        )
+                    else:
+                        completed = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    # Process results
+                    for item in completed:
+                        if isinstance(item, Exception):
+                            logger.error(f"Parallel task exception: {item}")
+                            continue
+                        node_id, result = item
+                        results[node_id] = result
+                        context.set_node_result(node_id, result)
+                        if result.status == "error":
+                            errors.append(node_id)
+
+                except TimeoutError:
+                    return NodeResult(
+                        status="error",
+                        error_message=f"Parallel execution timed out after {timeout_seconds}s",
+                        data={
+                            "completed": len(results),
+                            "total_nodes": len(parallel_node_ids),
+                            "results": {k: v.status for k, v in results.items()},
+                            "errors": errors,
+                            "timed_out": True,
+                        },
+                        duration_ms=self._duration_ms(started_at),
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                    )
+
+                # In wait-all mode, return error if any node failed
+                if errors:
+                    return NodeResult(
+                        status="error",
+                        error_message=f"Parallel nodes failed: {', '.join(errors)}",
+                        data={
+                            "completed": len(results),
+                            "total_nodes": len(parallel_node_ids),
+                            "results": {k: v.status for k, v in results.items()},
+                            "errors": errors,
+                        },
+                        duration_ms=self._duration_ms(started_at),
+                        started_at=started_at,
+                        finished_at=datetime.now(),
+                    )
+
+            # All successful
+            return NodeResult(
+                status="success",
+                output={
+                    "completed": len(results),
+                    "nodes": list(results.keys()),
+                },
+                data={
+                    "completed": len(results),
+                    "total_nodes": len(parallel_node_ids),
+                    "results": {k: v.status for k, v in results.items()},
+                    "errors": [],
+                },
+                duration_ms=self._duration_ms(started_at),
+                started_at=started_at,
+                finished_at=datetime.now(),
+            )
+
+        except Exception as e:
+            logger.exception(f"Parallel {node.id}: unexpected error")
+            return NodeResult.error(f"Parallel error: {e}", started_at=started_at)
 
     def _evaluate_break_condition(
         self, expr: str, context: ExecutionContext
