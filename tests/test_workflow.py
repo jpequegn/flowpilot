@@ -187,7 +187,7 @@ class TestWorkflow:
                         "type": "loop",
                         "id": "iterate",
                         "for": "items",
-                        "do": "nonexistent",
+                        "do": ["nonexistent"],
                     }
                 ],
             )

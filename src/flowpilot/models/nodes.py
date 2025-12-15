@@ -101,7 +101,10 @@ class LoopNode(BaseNode):
     type: Literal["loop"]
     for_each: str = Field(..., alias="for", description="Expression yielding items to iterate")
     as_var: str = Field(default="item", alias="as", description="Variable name for each item")
-    do: str = Field(..., description="Node ID to execute for each item")
+    index_var: str = Field(default="index", description="Variable name for current index")
+    do: list[str] = Field(..., description="Node IDs to execute for each item")
+    max_iterations: int | None = Field(default=None, ge=1, description="Maximum iterations (safety limit)")
+    break_if: str | None = Field(default=None, description="Expression to break loop early")
 
 
 class DelayNode(BaseNode):

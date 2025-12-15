@@ -6,6 +6,7 @@ from .condition import ConditionExecutor
 from .file_read import FileReadExecutor
 from .file_write import FileWriteExecutor
 from .http import HttpExecutor
+from .loop import LoopExecutor
 from .shell import ShellExecutor
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "FileReadExecutor",
     "FileWriteExecutor",
     "HttpExecutor",
+    "LoopExecutor",
     "ShellExecutor",
 ]

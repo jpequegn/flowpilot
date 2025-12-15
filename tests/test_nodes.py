@@ -158,15 +158,15 @@ class TestLoopNode:
         node = LoopNode(
             type="loop",
             id="process-items",
-            **{"for": "items", "as": "item", "do": "process-item"},
+            **{"for": "items", "as": "item", "do": ["process-item"]},
         )
         assert node.for_each == "items"
         assert node.as_var == "item"
-        assert node.do == "process-item"
+        assert node.do == ["process-item"]
 
     def test_loop_node_default_as(self) -> None:
         """Test loop node with default 'as' variable."""
-        node = LoopNode(type="loop", id="iterate", **{"for": "data", "do": "handle"})
+        node = LoopNode(type="loop", id="iterate", **{"for": "data", "do": ["handle"]})
         assert node.as_var == "item"
 
 
