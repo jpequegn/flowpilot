@@ -120,6 +120,12 @@ class ParallelNode(BaseNode):
     type: Literal["parallel"]
     nodes: list[str] = Field(..., description="Node IDs to execute in parallel")
     fail_fast: bool = Field(default=True, description="Stop on first failure")
+    max_concurrency: int | None = Field(
+        default=None, ge=1, description="Limit simultaneous executions"
+    )
+    timeout: int | None = Field(
+        default=None, ge=1, description="Timeout in seconds for entire parallel group"
+    )
 
 
 class ClaudeCliNode(BaseNode):

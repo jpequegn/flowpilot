@@ -7,6 +7,7 @@ from .file_read import FileReadExecutor
 from .file_write import FileWriteExecutor
 from .http import HttpExecutor
 from .loop import LoopExecutor
+from .parallel import ParallelExecutor
 from .shell import ShellExecutor
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "FileWriteExecutor",
     "HttpExecutor",
     "LoopExecutor",
+    "ParallelExecutor",
     "ShellExecutor",
 ]
