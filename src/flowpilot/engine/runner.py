@@ -125,9 +125,7 @@ class WorkflowRunner:
 
                 # Handle loop nodes specially
                 if isinstance(node, LoopNode):
-                    result = await self._execute_loop_node(
-                        node, context, workflow, error_report
-                    )
+                    result = await self._execute_loop_node(node, context, workflow, error_report)
                 elif isinstance(node, ParallelNode):
                     result = await self._execute_parallel_node(
                         node, context, workflow, error_report
@@ -618,12 +616,14 @@ class WorkflowRunner:
                         break
 
                 # Record iteration result
-                items_processed.append({
-                    "index": index,
-                    "item": item,
-                    "success": not iteration_failed,
-                    "child_results": len(iteration_results),
-                })
+                items_processed.append(
+                    {
+                        "index": index,
+                        "item": item,
+                        "success": not iteration_failed,
+                        "child_results": len(iteration_results),
+                    }
+                )
 
                 # Stop loop on iteration failure (fail-fast behavior)
                 if iteration_failed:
@@ -690,9 +690,7 @@ class WorkflowRunner:
 
         try:
             # First, execute the parallel node itself to get configuration
-            parallel_result = await self._execute_node(
-                node, context, workflow, error_report
-            )
+            parallel_result = await self._execute_node(node, context, workflow, error_report)
 
             if parallel_result.status == "error":
                 return parallel_result
@@ -737,14 +735,10 @@ class WorkflowRunner:
 
                     child_node = self._get_node(workflow, node_id)
                     if child_node is None:
-                        logger.warning(
-                            f"Parallel {node.id}: child node '{node_id}' not found"
-                        )
+                        logger.warning(f"Parallel {node.id}: child node '{node_id}' not found")
                         return node_id, NodeResult.error(f"Node '{node_id}' not found")
 
-                    result = await self._execute_node(
-                        child_node, context, workflow, error_report
-                    )
+                    result = await self._execute_node(child_node, context, workflow, error_report)
                     return node_id, result
 
             logger.debug(
@@ -927,9 +921,7 @@ class WorkflowRunner:
             logger.exception(f"Parallel {node.id}: unexpected error")
             return NodeResult.error(f"Parallel error: {e}", started_at=started_at)
 
-    def _evaluate_break_condition(
-        self, expr: str, context: ExecutionContext
-    ) -> bool:
+    def _evaluate_break_condition(self, expr: str, context: ExecutionContext) -> bool:
         """Evaluate a break condition expression.
 
         Args:

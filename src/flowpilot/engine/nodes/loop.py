@@ -217,9 +217,7 @@ class LoopExecutor(NodeExecutor):
         except Exception as e:
             raise ValueError(f"Expression evaluation failed: {e}") from e
 
-    def _evaluate_break_condition(
-        self, expr: str, context: dict[str, Any]
-    ) -> bool:
+    def _evaluate_break_condition(self, expr: str, context: dict[str, Any]) -> bool:
         """Evaluate a break condition expression.
 
         Args:
