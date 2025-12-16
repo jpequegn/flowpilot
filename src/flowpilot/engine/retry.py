@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import random
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tenacity import (
     AsyncRetrying,
@@ -61,7 +61,7 @@ class RetryExecutor:
         from .context import NodeResult
 
         retry_config = node.retry or self.default_config
-        attempts: list[dict] = []
+        attempts: list[dict[str, Any]] = []
         last_error: Exception | None = None
 
         def should_retry(exc: BaseException) -> bool:

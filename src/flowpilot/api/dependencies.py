@@ -20,7 +20,8 @@ def get_workflows_dir(request: Request) -> Path:
     Returns:
         Path to workflows directory.
     """
-    return request.app.state.workflows_dir
+    workflows_dir: Path = request.app.state.workflows_dir
+    return workflows_dir
 
 
 def get_runner(request: Request) -> WorkflowRunner | None:
@@ -32,7 +33,10 @@ def get_runner(request: Request) -> WorkflowRunner | None:
     Returns:
         WorkflowRunner instance or None.
     """
-    return request.app.state.runner
+    from flowpilot.engine.runner import WorkflowRunner as Runner
+
+    runner: Runner | None = request.app.state.runner
+    return runner
 
 
 def require_runner(request: Request) -> WorkflowRunner:
@@ -47,7 +51,9 @@ def require_runner(request: Request) -> WorkflowRunner:
     Raises:
         HTTPException: If runner is not configured.
     """
-    runner = request.app.state.runner
+    from flowpilot.engine.runner import WorkflowRunner as Runner
+
+    runner: Runner | None = request.app.state.runner
     if runner is None:
         raise HTTPException(
             status_code=503,

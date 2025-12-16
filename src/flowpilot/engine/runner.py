@@ -488,6 +488,8 @@ class WorkflowRunner:
         Returns:
             Fallback result if successful, None if fallback fails or not available.
         """
+        if node.fallback is None:
+            return None
         fallback_node = self._get_node(workflow, node.fallback)
         if fallback_node is None:
             logger.warning(f"Fallback node '{node.fallback}' not found for node '{node.id}'")
@@ -845,20 +847,20 @@ class WorkflowRunner:
 
             else:
                 # Wait-all mode: collect all results regardless of errors
-                tasks = [execute_with_semaphore(node_id) for node_id in parallel_node_ids]
+                coroutines = [execute_with_semaphore(node_id) for node_id in parallel_node_ids]
 
                 try:
                     if timeout_seconds:
                         completed = await asyncio.wait_for(
-                            asyncio.gather(*tasks, return_exceptions=True),
+                            asyncio.gather(*coroutines, return_exceptions=True),
                             timeout=timeout_seconds,
                         )
                     else:
-                        completed = await asyncio.gather(*tasks, return_exceptions=True)
+                        completed = await asyncio.gather(*coroutines, return_exceptions=True)
 
                     # Process results
                     for item in completed:
-                        if isinstance(item, Exception):
+                        if isinstance(item, BaseException):
                             logger.error(f"Parallel task exception: {item}")
                             continue
                         node_id, result = item
