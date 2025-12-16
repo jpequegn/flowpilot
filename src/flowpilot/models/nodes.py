@@ -108,10 +108,15 @@ class LoopNode(BaseNode):
 
 
 class DelayNode(BaseNode):
-    """Wait for a duration."""
+    """Wait for a duration or until a specific time."""
 
     type: Literal["delay"]
-    duration: str = Field(..., description="Duration like '5s', '1m', '30s'")
+    duration: str | None = Field(
+        default=None, description="Duration like '5s', '1m', '2h', '1d'"
+    )
+    until: str | None = Field(
+        default=None, description="ISO datetime or template expression to wait until"
+    )
 
 
 class ParallelNode(BaseNode):
