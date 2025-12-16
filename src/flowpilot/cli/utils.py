@@ -16,6 +16,15 @@ def get_flowpilot_dir() -> Path:
     return FLOWPILOT_DIR
 
 
+def get_workflows_dir() -> Path:
+    """Get the workflows directory path.
+
+    Returns:
+        Path to ~/.flowpilot/workflows directory.
+    """
+    return WORKFLOWS_DIR
+
+
 def resolve_workflow_path(name: str) -> Path:
     """Resolve workflow name to file path.
 

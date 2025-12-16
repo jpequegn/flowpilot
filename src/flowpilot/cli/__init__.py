@@ -27,8 +27,11 @@ from flowpilot.cli.commands import (  # noqa: E402, F401
     history,
     init,
     list_cmd,
+    logs,
     run,
     schedule,
+    serve,
+    service,
     validate,
 )
 
