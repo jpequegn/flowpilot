@@ -88,6 +88,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/flowpilot/cli/commands/*.py" = ["B904"]  # typer.Exit doesn't use exception chaining
+"src/flowpilot/api/routes/*.py" = ["TC001"]   # Runtime imports needed for FastAPI dependencies
+"src/flowpilot/api/schemas/*.py" = ["TC003"]  # Runtime imports needed for Pydantic models
 
 [tool.ruff.lint.isort]
 known-first-party = ["flowpilot"]
