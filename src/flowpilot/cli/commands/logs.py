@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime  # noqa: TC003
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import typer
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 @app.command()
 def logs(
-    name: str = typer.Argument(..., help="Workflow name"),
+    name: str = typer.Argument(None, help="Workflow name"),
     follow: bool = typer.Option(
         False,
         "--follow",
@@ -32,10 +32,10 @@ def logs(
         help="Follow log output (tail -f style)",
     ),
     lines: int = typer.Option(
-        1,
+        50,
         "--lines",
         "-n",
-        help="Number of recent executions to show",
+        help="Number of recent lines/executions to show",
     ),
     execution_id: str | None = typer.Option(
         None,
@@ -43,18 +43,35 @@ def logs(
         "-e",
         help="Show logs for a specific execution ID",
     ),
+    server: bool = typer.Option(
+        False,
+        "--server",
+        "-s",
+        help="View server logs instead of workflow logs",
+    ),
 ) -> None:
-    """View execution logs for a workflow.
+    """View execution logs for a workflow or server logs.
 
     Shows stdout, stderr, and node outputs from workflow executions.
     Use -f/--follow to tail logs in real-time.
+    Use --server to view the FlowPilot server logs.
 
     Examples:
         flowpilot logs my-workflow
         flowpilot logs my-workflow -f
         flowpilot logs my-workflow -n 5
         flowpilot logs my-workflow -e abc12345
+        flowpilot logs --server
+        flowpilot logs --server -f
     """
+    if server:
+        _show_server_logs(follow, lines)
+        return
+
+    if not name:
+        console.print("[red]Error:[/] Workflow name is required (or use --server)")
+        raise typer.Exit(1)
+
     db_path = get_flowpilot_dir() / "flowpilot.db"
 
     if not db_path.exists():
@@ -75,6 +92,83 @@ def logs(
     else:
         # Show recent executions
         _show_recent_logs(db, name, lines)
+
+
+def _show_server_logs(follow: bool, lines: int) -> None:
+    """Show server logs from the log file.
+
+    Args:
+        follow: Whether to follow the log output.
+        lines: Number of recent lines to show.
+    """
+    log_dir = get_flowpilot_dir() / "logs"
+    server_log = log_dir / "server.log"
+    error_log = log_dir / "server.error.log"
+
+    if not server_log.exists() and not error_log.exists():
+        console.print("[yellow]No server logs found.[/]")
+        console.print("Start the server with [cyan]flowpilot serve[/] to generate logs.")
+        return
+
+    if follow:
+        # Follow mode - tail logs
+        console.print("[dim]Following server logs... (Ctrl+C to stop)[/]")
+        console.print()
+
+        last_pos: dict[str, int] = {}
+
+        try:
+            while True:
+                for log_file, prefix in [(server_log, ""), (error_log, "[stderr] ")]:
+                    if not log_file.exists():
+                        continue
+
+                    current_size = log_file.stat().st_size
+                    last_position = last_pos.get(str(log_file), 0)
+
+                    if current_size > last_position:
+                        with log_file.open("r") as f:
+                            f.seek(last_position)
+                            new_content = f.read()
+                            for line in new_content.splitlines():
+                                if line.strip():
+                                    if prefix:
+                                        console.print(f"[yellow]{prefix}{line}[/]")
+                                    else:
+                                        console.print(line)
+                            last_pos[str(log_file)] = f.tell()
+
+                time.sleep(0.5)
+
+        except KeyboardInterrupt:
+            console.print("\n[dim]Stopped following logs.[/]")
+    else:
+        # Show recent lines
+        all_lines: list[tuple[str, str]] = []
+
+        for log_file, style in [(server_log, ""), (error_log, "yellow")]:
+            if not log_file.exists():
+                continue
+
+            with log_file.open("r") as f:
+                file_lines = f.readlines()
+                for line in file_lines:
+                    all_lines.append((line.rstrip(), style))
+
+        # Show last N lines
+        if not all_lines:
+            console.print("[yellow]Server logs are empty.[/]")
+            return
+
+        console.print("[bold]FlowPilot Server Logs[/]")
+        console.print()
+
+        for line, style in all_lines[-lines:]:
+            if line.strip():
+                if style:
+                    console.print(f"[{style}]{line}[/]")
+                else:
+                    console.print(line)
 
 
 def _show_execution_logs(db: Database, workflow_name: str, execution_id: str) -> None:

@@ -9,7 +9,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import health, workflows
-from .webhooks import router as webhook_router
+from .webhooks import (
+    router as webhook_router,
+)
+from .webhooks import (
+    set_global_webhook_runner,
+    set_workflows_dir,
+)
 
 if TYPE_CHECKING:
     from flowpilot.engine.runner import WorkflowRunner
@@ -52,6 +58,11 @@ def create_app(
     # Store config in app state
     app.state.workflows_dir = workflows_dir
     app.state.runner = runner
+
+    # Set up webhook service (for serve command compatibility)
+    set_workflows_dir(workflows_dir)
+    if runner:
+        set_global_webhook_runner(runner)
 
     # Configure CORS
     if enable_cors:
