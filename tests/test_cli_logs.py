@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
