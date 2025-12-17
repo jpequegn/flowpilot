@@ -106,8 +106,8 @@ class TestDebouncedHandler:
         handler.on_any_event(event)
         handler.on_any_event(event)
 
-        # Wait for debounce
-        time.sleep(0.2)
+        # Wait for debounce (use longer timeout for CI reliability)
+        time.sleep(0.5)
 
         # Should only be called once due to debouncing
         assert callback.call_count == 1

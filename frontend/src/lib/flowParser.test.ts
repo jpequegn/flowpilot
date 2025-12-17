@@ -69,20 +69,20 @@ describe("flowParser", () => {
         },
       ]
 
-      const { nodes } = parseWorkflowToFlow(workflowNodes)
+      const result = parseWorkflowToFlow(workflowNodes)
 
-      expect(nodes).toHaveLength(2)
-      expect(nodes[0].id).toBe("node1")
-      expect(nodes[0].type).toBe("shell")
-      expect(nodes[0].data.label).toBe("node1")
-      expect(nodes[0].data.nodeType).toBe("shell")
-      expect(nodes[0].data.config).toEqual({ command: "echo hello" })
-      expect(nodes[0].position).toBeDefined()
-      expect(nodes[0].position.x).toBeTypeOf("number")
-      expect(nodes[0].position.y).toBeTypeOf("number")
+      expect(result.nodes).toHaveLength(2)
+      expect(result.nodes[0].id).toBe("node1")
+      expect(result.nodes[0].type).toBe("shell")
+      expect(result.nodes[0].data.label).toBe("node1")
+      expect(result.nodes[0].data.nodeType).toBe("shell")
+      expect(result.nodes[0].data.config).toEqual({ command: "echo hello" })
+      expect(result.nodes[0].position).toBeDefined()
+      expect(result.nodes[0].position.x).toBeTypeOf("number")
+      expect(result.nodes[0].position.y).toBeTypeOf("number")
 
-      expect(nodes[1].id).toBe("node2")
-      expect(nodes[1].type).toBe("http")
+      expect(result.nodes[1].id).toBe("node2")
+      expect(result.nodes[1].type).toBe("http")
     })
 
     it("creates edges from dependencies", () => {

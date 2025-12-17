@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-backend:
+    name: Backend Tests
     runs-on: macos-latest
     strategy:
       matrix:
@@ -39,3 +40,79 @@ jobs:
 
       - name: Verify CLI works
         run: uv run flowpilot --help
+
+  test-frontend:
+    name: Frontend Tests
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          bun install
+
+      - name: Lint
+        run: |
+          cd frontend
+          bun run lint
+
+      - name: Type check
+        run: |
+          cd frontend
+          bun run build
+
+      - name: Run tests
+        run: |
+          cd frontend
+          npm test
+
+  build-package:
+    name: Build Package
+    runs-on: macos-latest
+    needs: [test-backend, test-frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install build dependencies
+        run: uv pip install --system build
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          bun install
+          bun run build
+          mkdir -p ../src/flowpilot/static
+          cp -r dist/* ../src/flowpilot/static/
+
+      - name: Build Python package
+        run: python -m build
+
+      - name: Verify package
+        run: |
+          ls -la dist/
+          python -m zipfile -l dist/*.whl | head -30
+
+      - name: Test installation
+        run: |
+          uv pip install --system dist/*.whl
+          flowpilot --version
+          flowpilot --help
