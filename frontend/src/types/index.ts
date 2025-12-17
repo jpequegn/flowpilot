@@ -160,6 +160,16 @@ export interface WebSocketMessage {
   data: Record<string, unknown>
 }
 
+// Log entry type for live logs
+export interface LogEntry {
+  id: string
+  level: "info" | "warn" | "error" | "debug"
+  message: string
+  timestamp: string
+  node_id?: string
+  execution_id: string
+}
+
 // API response types
 export interface PaginatedResponse<T> {
   items: T[]

@@ -1,8 +1,16 @@
 import { useState, useMemo } from "react"
 import { useParams, Link } from "react-router-dom"
-import { ArrowLeft, Loader2, AlertCircle } from "lucide-react"
+import {
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  GitBranch,
+  ScrollText,
+} from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FlowCanvas, ExecutionSidebar } from "@/components/flow"
+import { LiveLogViewer } from "@/components/executions"
 import { useExecution, useLiveExecutionUpdates } from "@/hooks/useExecutions"
 import { useWorkflow } from "@/hooks/useWorkflows"
 import { extractNodesFromYaml } from "@/lib/yamlParser"
@@ -11,6 +19,7 @@ import type { NodeResult } from "@/lib/flowParser"
 export function ExecutionDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<string>("flow")
 
   const {
     data: execution,
@@ -100,59 +109,85 @@ export function ExecutionDetailPage() {
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
       {/* Header */}
-      <div className="flex items-center gap-4 border-b pb-4">
-        <Link
-          to="/executions"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Execution: {execution.workflow_name}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {execution.id.slice(0, 8)}...
-            {isConnected && execution.status === "running" && (
-              <span className="ml-2 text-green-500">Live</span>
-            )}
-          </p>
+      <div className="flex items-center justify-between border-b pb-4">
+        <div className="flex items-center gap-4">
+          <Link
+            to="/executions"
+            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Execution: {execution.workflow_name}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {execution.id.slice(0, 8)}...
+              {isConnected && execution.status === "running" && (
+                <span className="ml-2 text-green-500">Live</span>
+              )}
+            </p>
+          </div>
         </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="flow" className="gap-2">
+              <GitBranch className="h-4 w-4" />
+              Flow
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="gap-2">
+              <ScrollText className="h-4 w-4" />
+              Logs
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden mt-4">
-        {/* Flow Canvas */}
-        <div className="flex-1 border rounded-lg overflow-hidden">
-          {workflowNodes.length > 0 ? (
-            <FlowCanvas
-              workflowNodes={workflowNodes}
-              nodeResults={nodeResults}
-              onNodeClick={setSelectedNodeId}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              {workflow
-                ? "No nodes found in workflow"
-                : "Workflow data not available"}
+        {activeTab === "flow" ? (
+          <>
+            {/* Flow Canvas */}
+            <div className="flex-1 border rounded-lg overflow-hidden">
+              {workflowNodes.length > 0 ? (
+                <FlowCanvas
+                  workflowNodes={workflowNodes}
+                  nodeResults={nodeResults}
+                  onNodeClick={setSelectedNodeId}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-muted-foreground">
+                  {workflow
+                    ? "No nodes found in workflow"
+                    : "Workflow data not available"}
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Sidebar */}
-        <div className="w-80 border-l ml-4 overflow-hidden">
-          <ExecutionSidebar
-            executionId={execution.id}
-            workflowName={execution.workflow_name}
-            status={execution.status}
-            startedAt={execution.started_at}
-            completedAt={execution.finished_at ?? undefined}
-            nodeResults={nodeResults}
-            selectedNodeId={selectedNodeId}
-            onNodeSelect={setSelectedNodeId}
-          />
-        </div>
+            {/* Sidebar */}
+            <div className="w-80 border-l ml-4 overflow-hidden">
+              <ExecutionSidebar
+                executionId={execution.id}
+                workflowName={execution.workflow_name}
+                status={execution.status}
+                startedAt={execution.started_at}
+                completedAt={execution.finished_at ?? undefined}
+                nodeResults={nodeResults}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={setSelectedNodeId}
+              />
+            </div>
+          </>
+        ) : (
+          /* Logs View */
+          <div className="flex-1 relative">
+            <LiveLogViewer
+              executionId={execution.id}
+              isRunning={execution.status === "running"}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

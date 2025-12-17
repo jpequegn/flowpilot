@@ -69,7 +69,7 @@ describe("flowParser", () => {
         },
       ]
 
-      const { nodes, edges } = parseWorkflowToFlow(workflowNodes)
+      const { nodes } = parseWorkflowToFlow(workflowNodes)
 
       expect(nodes).toHaveLength(2)
       expect(nodes[0].id).toBe("node1")
