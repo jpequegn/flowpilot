@@ -28,6 +28,60 @@ export interface WorkflowInput {
   description?: string
 }
 
+// Workflow list item (from API)
+export interface WorkflowListItem {
+  name: string
+  description: string
+  version: number
+  path: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+// Workflow detail (from API)
+export interface WorkflowDetail {
+  name: string
+  description: string
+  version: number
+  path: string
+  content: string
+  triggers: Record<string, unknown>[]
+  inputs: Record<string, unknown>
+  node_count: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+// Workflow create request
+export interface WorkflowCreateRequest {
+  name: string
+  content: string
+}
+
+// Workflow update request
+export interface WorkflowUpdateRequest {
+  content: string
+}
+
+// Workflow validation response
+export interface WorkflowValidation {
+  valid: boolean
+  errors: Record<string, unknown>[]
+  warnings: string[]
+}
+
+// Workflow run request
+export interface WorkflowRunRequest {
+  inputs?: Record<string, unknown>
+}
+
+// Workflow run response
+export interface WorkflowRunResponse {
+  execution_id: string
+  workflow: string
+  status: string
+}
+
 // Execution types
 export interface Execution {
   id: string
