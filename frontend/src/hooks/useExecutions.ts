@@ -6,6 +6,7 @@ import type {
   ExecutionDetail,
   WebSocketMessage,
   NodeExecutionResponse,
+  LogEntry,
 } from "@/types"
 
 // Query keys
@@ -121,4 +122,79 @@ export function useLiveExecutionUpdates(executionId: string | null) {
   }, [connect, disconnect])
 
   return { nodeResults, isConnected }
+}
+
+// WebSocket hook for live log streaming
+export function useLiveLogs(executionId: string | null) {
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [isConnected, setIsConnected] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
+  const logIdCounter = useRef(0)
+
+  const connect = useCallback(() => {
+    if (!executionId) return
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    const wsUrl = `${protocol}//${window.location.host}/api/executions/${executionId}/ws`
+
+    try {
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        setIsConnected(true)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const message: WebSocketMessage = JSON.parse(event.data)
+
+          if (message.type === "log") {
+            const data = message.data
+            const logEntry: LogEntry = {
+              id: `log-${logIdCounter.current++}`,
+              level: (data.level as LogEntry["level"]) ?? "info",
+              message: (data.message as string) ?? "",
+              timestamp: message.timestamp,
+              node_id: data.node_id as string | undefined,
+              execution_id: message.execution_id,
+            }
+            setLogs((prev) => [...prev, logEntry])
+          }
+        } catch (e) {
+          console.error("Failed to parse WebSocket message:", e)
+        }
+      }
+
+      ws.onclose = () => {
+        setIsConnected(false)
+      }
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error)
+        setIsConnected(false)
+      }
+    } catch (e) {
+      console.error("Failed to create WebSocket:", e)
+    }
+  }, [executionId])
+
+  const disconnect = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+  }, [])
+
+  const clearLogs = useCallback(() => {
+    setLogs([])
+    logIdCounter.current = 0
+  }, [])
+
+  useEffect(() => {
+    connect()
+    return () => disconnect()
+  }, [connect, disconnect])
+
+  return { logs, isConnected, clearLogs }
 }
