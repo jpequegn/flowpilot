@@ -111,6 +111,55 @@ export interface NodeExecution {
   error?: string
 }
 
+// Execution list item (from API)
+export interface ExecutionListItem {
+  id: string
+  workflow_name: string
+  status: ExecutionStatusType
+  trigger_type: string | null
+  started_at: string
+  finished_at: string | null
+  duration_ms: number | null
+}
+
+// Node execution response (from API)
+export interface NodeExecutionResponse {
+  id: number
+  node_id: string
+  node_type: string
+  status: ExecutionStatusType
+  started_at: string | null
+  finished_at: string | null
+  duration_ms: number | null
+  stdout: string
+  stderr: string
+  output: string
+  error: string | null
+}
+
+// Execution detail (from API)
+export interface ExecutionDetail {
+  id: string
+  workflow_name: string
+  workflow_path: string
+  status: ExecutionStatusType
+  trigger_type: string | null
+  inputs: Record<string, unknown>
+  started_at: string
+  finished_at: string | null
+  duration_ms: number | null
+  error: string | null
+  node_executions: NodeExecutionResponse[]
+}
+
+// WebSocket message format
+export interface WebSocketMessage {
+  type: "log" | "status" | "error" | "heartbeat"
+  execution_id: string
+  timestamp: string
+  data: Record<string, unknown>
+}
+
 // API response types
 export interface PaginatedResponse<T> {
   items: T[]

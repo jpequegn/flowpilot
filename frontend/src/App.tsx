@@ -4,7 +4,7 @@ import { queryClient } from "@/lib/api"
 import { AppLayout } from "@/components/layout"
 import { Dashboard } from "@/pages/Dashboard"
 import { WorkflowsPage, WorkflowEditorPage } from "@/pages/workflows"
-import { ExecutionsPage } from "@/pages/executions"
+import { ExecutionsPage, ExecutionDetailPage } from "@/pages/executions"
 import { SettingsPage } from "@/pages/settings"
 
 function App() {
@@ -17,6 +17,7 @@ function App() {
             <Route path="/workflows" element={<WorkflowsPage />} />
             <Route path="/workflows/:name" element={<WorkflowEditorPage />} />
             <Route path="/executions" element={<ExecutionsPage />} />
+            <Route path="/executions/:id" element={<ExecutionDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Routes>
