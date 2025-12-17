@@ -35,9 +35,7 @@ export function SettingsPage() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm">API Endpoint</span>
-              <code className="text-sm text-muted-foreground">
-                /api
-              </code>
+              <code className="text-sm text-muted-foreground">/api</code>
             </div>
           </div>
         </div>
